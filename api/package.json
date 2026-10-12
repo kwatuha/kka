@@ -1,0 +1,29 @@
+{
+  "name": "intellinex-api",
+  "version": "1.0.0",
+  "description": "API server for IntelliNex (generic platform) deployments",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "migrate:telemedicine": "node scripts/run-telemedicine-migration.js",
+    "migrate:telemedicine:docker": "bash scripts/run-telemedicine-migration-docker.sh",
+    "migrate:telemedicine-showcase": "node scripts/run-telemedicine-showcase-migration.js",
+    "migrate:appointment-limits": "node scripts/run-appointment-limits-migration.js",
+    "migrate:telemedicine-department": "node scripts/run-telemedicine-department-migration.js"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.5",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.14.0",
+    "nodemailer": "^10.0.15"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

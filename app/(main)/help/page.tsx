@@ -1,0 +1,1351 @@
+"use client"
+
+import { Suspense } from "react"
+import { useSearchParams } from "next/navigation"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { 
+  Users, 
+  Calendar, 
+  ClipboardList, 
+  DollarSign, 
+  Pill, 
+  FlaskConical, 
+  ImageIcon,
+  BedDouble,
+  HeartPulse,
+  ShoppingCart,
+  FileText,
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  UserCheck,
+  Stethoscope,
+  Video,
+  Building2,
+  BarChart3,
+  Store,
+  MapPin,
+  ArrowLeftRight,
+  DoorOpen,
+} from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { branding } from "@/lib/branding"
+
+function HelpPageContent() {
+  const searchParams = useSearchParams()
+  const requestedTab = searchParams.get("tab")
+  const initialTab = ["workflows", "modules", "telemedicine", "multi-facility", "queues-labs", "quick-start", "faq"].includes(
+    requestedTab || ""
+  )
+    ? requestedTab!
+    : "workflows"
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Help & Documentation</h1>
+        <p className="text-muted-foreground mt-2">
+          Comprehensive guide to using {branding.appBrand} MIS
+        </p>
+      </div>
+
+      <Tabs defaultValue={initialTab} className="w-full">
+        <TabsList className="flex w-full flex-wrap gap-1 h-auto min-h-10 justify-start sm:grid sm:grid-cols-7">
+          <TabsTrigger value="workflows">Workflows</TabsTrigger>
+          <TabsTrigger value="modules">Modules</TabsTrigger>
+          <TabsTrigger value="telemedicine" className="gap-1.5">
+            <Video className="h-3.5 w-3.5" />
+            Telemedicine
+          </TabsTrigger>
+          <TabsTrigger value="multi-facility" className="gap-1.5">
+            <Building2 className="h-3.5 w-3.5" />
+            Multi-facility
+          </TabsTrigger>
+          <TabsTrigger value="queues-labs" className="gap-1.5">
+            <MapPin className="h-3.5 w-3.5" />
+            Queues &amp; labs
+          </TabsTrigger>
+          <TabsTrigger value="quick-start">Quick Start</TabsTrigger>
+          <TabsTrigger value="faq">FAQ</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="telemedicine" className="space-y-6 mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Video className="h-5 w-5" />
+                Telemedicine &amp; video visits
+              </CardTitle>
+              <CardDescription>
+                Meeting links and consent are stored in HMIS. HMIS does not call Zoom or other vendor APIs to create meetings—it only stores
+                what you paste or copy from <strong>My Zoom defaults</strong>, plus audit and consent.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6 text-sm leading-relaxed">
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">One session per patient</h3>
+                <p className="text-muted-foreground">
+                  There is <strong>one active HMIS telemedicine session per patient</strong>. Everyone joins that same session. The meeting URL
+                  appears on the facility board after it is saved—for <strong>Zoom</strong> that may happen automatically from{" "}
+                  <strong>My Zoom defaults</strong> (or an optional link when starting); otherwise the clinician pastes the link in the visit
+                  panel first. Use <strong>Join Session</strong> to open the session panel (consent, documentation, optional embedded video) and the
+                  stored meeting link on the board.
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Hub &amp; session board</h3>
+                <p className="text-muted-foreground">
+                  <strong>Telemedicine</strong> lists recent facility sessions. <strong>Telemedicine sessions</strong> (create page) has the
+                  live queue, the <strong>Active video visits</strong> board, and a filterable session board with Join actions so nurses and
+                  other staff use the <strong>same</strong> call—not a new room.
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Starting vs joining</h3>
+                <p className="text-muted-foreground">
+                  <strong>Starting a new visit</strong> requires saved <strong>My Zoom defaults</strong> (join URL + optional passcode) when
+                  your workflow uses that. <strong>Joining</strong> a visit someone else started uses <strong>Join Session</strong> on the
+                  board—no defaults needed.
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Session panel (visit)</h3>
+                <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                  <li>Paste or save the platform join link and optional passcode; apply saved Zoom defaults when available.</li>
+                  <li>Record patient consent (and guardian consent when the patient is under 18) before starting the teleconsultation.</li>
+                  <li>
+                    <strong>Embedded video</strong> (if enabled by your server): Zoom Meeting SDK in the page. Use a standard join URL with{" "}
+                    <code className="rounded bg-muted px-1">/j/</code> and the meeting number. Optional: <code className="rounded bg-muted px-1">ENABLE_ZOOM_COEP_HEADERS=true</code> at build for better gallery/virtual background performance.
+                  </li>
+                  <li>
+                    If embedding is not configured, add Meeting SDK credentials on the API server—or open Zoom in a new window / popup (many
+                    providers block iframes).
+                  </li>
+                </ul>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Embedded Zoom controls</h3>
+                <p className="text-muted-foreground">
+                  <strong>In-page embed</strong> loads the meeting directly in HMIS (not Zoom&apos;s separate browser pre-join page). Mic, camera,
+                  and leave are on Zoom&apos;s bar at the bottom of the video. If the toolbar is cramped, open the visit on the full session page
+                  or resize the browser window. The badge shows <strong>Host</strong> vs <strong>Participant</strong> (Zoom Meeting SDK join role): HMIS
+                  picks it from your session link vs <strong>My Zoom defaults</strong> — <strong>Host</strong> when the meeting id matches (typical for
+                  your room), <strong>Participant</strong> otherwise. After joining, mic and camera start off — use <strong>Join audio</strong> (headset) with{" "}
+                  <strong>Computer audio</strong>, then <strong>Start video</strong>, and allow browser prompts. Prefer <strong>HTTPS</strong> or{" "}
+                  <strong>localhost</strong> for media; if controls stay disabled, check site permissions (lock icon in the address bar).
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">My Zoom defaults (settings)</h3>
+                <p className="text-muted-foreground">
+                  Save your usual Zoom join link (e.g. Personal Meeting link). New sessions can copy these automatically; you can still change
+                  per visit. Stored for clinical use—use a link you are allowed to share for patient care.
+                </p>
+              </section>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="multi-facility" className="space-y-6 mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5" />
+                Multi-facility and hospital branch support
+              </CardTitle>
+              <CardDescription>
+                Operate several hospitals, clinics or branches in one system while retaining a clear facility
+                identity for patients, clinical activity, finance and stock.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6 text-sm leading-relaxed">
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Selecting the working facility</h3>
+                <p className="text-muted-foreground">
+                  Use the <strong>branch selector in the header</strong> to choose the facility where you are
+                  currently working. Staff assigned to one facility use their assigned branch automatically.
+                  Administrators and authorised regional users can switch between all facilities available to
+                  their account.
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">How activity is attributed</h3>
+                <p className="text-muted-foreground">
+                  Register patients and perform operational work after selecting the correct branch. The system
+                  associates facility context with patient registration, queues, appointments, consultations,
+                  prescriptions, laboratory and radiology orders, invoices, payments and pharmacy inventory.
+                  This identifies both where a patient entered the network and where care or financial activity
+                  occurred.
+                </p>
+                <div className="rounded-md border bg-muted/40 p-3 text-muted-foreground">
+                  A patient may be registered at one branch and later receive services at another. Registration
+                  remains associated with the originating facility, while each new operational record is
+                  attributed to the facility handling that activity.
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="font-semibold text-base text-foreground flex items-center gap-2">
+                  <BarChart3 className="h-4 w-4" />
+                  Monitoring performance across facilities
+                </h3>
+                <p className="text-muted-foreground">
+                  Open <strong>Dashboard → Facility Performance</strong> to compare branches for the selected
+                  reporting period. The consolidated view includes:
+                </p>
+                <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                  <li>Patients registered and patients handled during the period</li>
+                  <li>Current queue workload and daily queue arrivals</li>
+                  <li>Consultations, prescriptions and laboratory activity</li>
+                  <li>Amounts billed, payments collected and outstanding balances</li>
+                  <li>Pharmacy stores, available stock units and transfer activity</li>
+                </ul>
+                <p className="text-muted-foreground">
+                  Facility managers can focus on their assigned branch, while administrators use the consolidated
+                  table to identify workload differences, revenue performance, pending bills and stock pressure
+                  across the network.
+                </p>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="font-semibold text-base text-foreground flex items-center gap-2">
+                  <Store className="h-4 w-4" />
+                  Pharmacy stores and cross-branch transfers
+                </h3>
+                <p className="text-muted-foreground">
+                  Each pharmacy store belongs to a hospital branch. Open{" "}
+                  <strong>Pharmacy → Drug Movement → Inter-store transfers</strong> to move medication between
+                  stores in the same facility or across branches.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-md border p-3">
+                    <div className="font-medium">Pending</div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      The transfer request is recorded; stock has not moved.
+                    </p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <div className="font-medium flex items-center gap-1">
+                      <ArrowLeftRight className="h-3.5 w-3.5" /> In transit
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Stock is deducted from the source store.
+                    </p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <div className="font-medium">Completed</div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      The receiving store confirms and gains the transferred stock.
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Recommended operating practice</h3>
+                <ol className="list-decimal pl-5 space-y-1 text-muted-foreground">
+                  <li>Confirm the selected branch before registering or serving a patient.</li>
+                  <li>Assign each staff member to their normal facility and grant all-branch access only when needed.</li>
+                  <li>Review Facility Performance regularly for workload, revenue and stock comparisons.</li>
+                  <li>Use Drug Movement rather than manual stock adjustments for transfers between facilities.</li>
+                  <li>
+                    Configure service points, lab units, and staff desk assignments — see the{" "}
+                    <strong>Queues &amp; labs</strong> help tab for multi-desk registration and consultation room setup.
+                  </li>
+                </ol>
+              </section>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="queues-labs" className="space-y-6 mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MapPin className="h-5 w-5" />
+                Service points, registration desks &amp; branch-scoped queues
+              </CardTitle>
+              <CardDescription>
+                Run multiple registration counters, triage bays, consultation rooms, cashier windows, pharmacy
+                desks, and lab collection points within the same branch — each with its own queue and staff
+                assignments.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6 text-sm leading-relaxed">
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">What is a service point?</h3>
+                <p className="text-muted-foreground">
+                  A <strong>service point</strong> is a physical station where patients are served and where staff
+                  work from a queue. Examples include <strong>Registration Desk 1</strong>,{" "}
+                  <strong>Triage Bay A</strong>, <strong>Consultation Room 3</strong>,{" "}
+                  <strong>Cashier Window 2</strong>, or <strong>Main Lab collection</strong>. Each point belongs to
+                  one branch and has a type (registration, triage, consultation, cashier, pharmacy, laboratory,
+                  radiology, billing, telemedicine, or procedure).
+                </p>
+                <p className="text-muted-foreground">
+                  Queue tickets are scoped to the branch and, when configured, to the specific service point. That
+                  lets several desks run in parallel without mixing patients between windows or rooms.
+                </p>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="font-semibold text-base text-foreground">Administrator setup</h3>
+                <p className="text-muted-foreground">
+                  Configure service points under <strong>Settings → System → Service points</strong> (or{" "}
+                  <code className="rounded bg-muted px-1">/settings/service-points</code>).
+                </p>
+                <ol className="list-decimal pl-5 space-y-2 text-muted-foreground">
+                  <li>
+                    Confirm the correct <strong>branch</strong> in the header before adding points.
+                  </li>
+                  <li>
+                    Click <strong>Add service point</strong>. Enter a name, code, type, and optional location.
+                    Mark one point per type as <strong>Default</strong> when the branch has a primary desk or room.
+                  </li>
+                  <li>
+                    For <strong>pharmacy</strong> or <strong>laboratory</strong> types, link the point to the
+                    corresponding drug store or lab unit so dispensing and lab worklists route correctly.
+                  </li>
+                  <li>
+                    Open <strong>Settings → Staff desk assignments</strong> to assign which users may work at
+                    which stations. Set a <strong>default desk</strong> per user so their queue dashboard opens
+                    on the right window automatically.
+                  </li>
+                </ol>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="font-semibold text-base text-foreground flex items-center gap-2">
+                  <UserCheck className="h-4 w-4" />
+                  Registration desks
+                </h3>
+                <p className="text-muted-foreground">
+                  When a facility has more than one registration counter, create multiple{" "}
+                  <strong>registration</strong> service points (e.g. &quot;Registration — Ground floor&quot; and
+                  &quot;Registration — Outpatient wing&quot;). Registration officers:
+                </p>
+                <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                  <li>Select their branch in the header, then open <strong>Queue → Service Point Dashboard</strong>.</li>
+                  <li>Use the <strong>Working desk / window</strong> selector to choose their registration desk.</li>
+                  <li>Add patients to the registration queue; only patients at that desk&apos;s queue appear in their list.</li>
+                  <li>Register new patients from <strong>Departments → Registration</strong>; the patient&apos;s home branch is recorded for reporting.</li>
+                </ul>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="font-semibold text-base text-foreground flex items-center gap-2">
+                  <HeartPulse className="h-4 w-4" />
+                  Triage &amp; consultation room routing
+                </h3>
+                <p className="text-muted-foreground">
+                  During triage, nurses assign a doctor and — for in-person consults — a{" "}
+                  <strong>consultation room</strong>. The room picker lists consultation-type service points for
+                  the current branch. If the doctor has a desk assignment, their default room is pre-selected.
+                </p>
+                <p className="text-muted-foreground">
+                  After consultation fees are <strong>paid or waived</strong>, the patient is added to the
+                  consultation queue in that room with the assigned doctor. Doctors open{" "}
+                  <strong>Queue → Service Point Dashboard → Consultation</strong>, select their room from the desk
+                  selector, and see only patients routed there.
+                </p>
+                <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                  <li>Use the <strong>door icon</strong> on a consultation queue row to transfer a patient to another room.</li>
+                  <li>Choose <strong>Telemedicine consult</strong> at triage to enqueue directly on the telemedicine queue instead.</li>
+                </ul>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="font-semibold text-base text-foreground flex items-center gap-2">
+                  <ClipboardList className="h-4 w-4" />
+                  Daily queue operations
+                </h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-md border p-3">
+                    <div className="font-medium">Service Point Dashboard</div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      <strong>Queue → Service Point Dashboard</strong> — call patients, update status, and work
+                      the queue for your selected desk. Tabs cover triage, registration, consultation, cashier,
+                      pharmacy, laboratory, and more.
+                    </p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <div className="font-medium">Desk selector</div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Appears when the branch has more than one point of the active type. Your choice is
+                      remembered per branch and queue type on this device.
+                    </p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <div className="font-medium">Public displays</div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Open <strong>/display</strong> for a waiting-room screen. Filter by service type, or add{" "}
+                      <code className="rounded bg-muted px-0.5">?servicePoint=consultation&amp;servicePointId=</code>
+                      {" "}with the room ID for a room-specific board.
+                    </p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <div className="font-medium">Login context</div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      After sign-in, staff receive their assigned service points and default desk. Mobile field
+                      apps persist branch and desk headers for API calls.
+                    </p>
+                  </div>
+                </div>
+              </section>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FlaskConical className="h-5 w-5" />
+                Multiple laboratory units
+              </CardTitle>
+              <CardDescription>
+                Separate hematology, microbiology, chemistry, and main lab workflows within one branch
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm leading-relaxed">
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Setting up lab units</h3>
+                <p className="text-muted-foreground">
+                  Administrators manage lab units under <strong>Settings → System → Laboratory units</strong> (
+                  <code className="rounded bg-muted px-1">/settings/laboratories</code>). Each unit has a name,
+                  code, branch, optional location, and can be marked as the branch default.
+                </p>
+                <p className="text-muted-foreground">
+                  Create a matching <strong>laboratory</strong> service point for each collection desk or work area
+                  and link it to the lab unit. Lab staff then filter the laboratory queue and worklists by their
+                  working lab from the desk selector on the Service Point Dashboard.
+                </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="font-semibold text-base text-foreground">Lab workflow with multiple units</h3>
+                <ol className="list-decimal pl-5 space-y-2 text-muted-foreground">
+                  <li>Doctor orders tests during consultation; billing creates a lab invoice as usual.</li>
+                  <li>After payment or waiver, the patient joins the <strong>laboratory queue</strong> for the branch.</li>
+                  <li>Lab staff at a specific unit select their lab desk and see work routed to that unit when linked.</li>
+                  <li>Sample collection, processing, and result entry follow the normal Laboratory module flow.</li>
+                  <li>Results appear in the patient record for the ordering clinician to review.</li>
+                </ol>
+              </section>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Pill className="h-5 w-5" />
+                Multiple pharmacy stores &amp; dispensing desks
+              </CardTitle>
+              <CardDescription>
+                Align pharmacy service points with drug stores per branch
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm leading-relaxed text-muted-foreground">
+              <p>
+                Drug stores are configured under <strong>Settings → Drug Stores Management</strong>. Each store
+                belongs to a branch and can be marked as a dispensing store.
+              </p>
+              <p>
+                Create one or more <strong>pharmacy</strong> service points per branch and link each to its store.
+                Pharmacy staff pick their dispensing window from the desk selector; the pharmacy queue shows
+                patients with paid prescriptions ready for that store.
+              </p>
+              <p>
+                For stock movement between stores or branches, see the{" "}
+                <strong>Multi-facility</strong> tab — <em>Pharmacy stores and cross-branch transfers</em>.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="h-5 w-5" />
+                Monitoring performance across service points
+              </CardTitle>
+              <CardDescription>
+                Drill down from branch-level metrics to individual desks, rooms, and windows.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm leading-relaxed text-muted-foreground">
+              <p>
+                Open <strong>Dashboard → Service Point Performance</strong> (
+                <code className="rounded bg-muted px-1">/service-point-performance</code>) to monitor queue
+                activity at each configured service point within a branch. Use it alongside{" "}
+                <strong>Facility Performance</strong>, which compares whole branches.
+              </p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Active queues, today&apos;s arrivals, and period totals per desk or room</li>
+                <li>Average wait and service times where timestamps are recorded</li>
+                <li>Summary by service point type (registration, triage, consultation, lab, etc.)</li>
+                <li>Staff assigned to each point and unassigned queue entries that need routing</li>
+              </ul>
+              <p>
+                Filter by branch, point type, and reporting period (7–90 days). Refresh after changing desk
+                assignments or opening new counters to confirm queues are landing on the correct service points.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <DoorOpen className="h-5 w-5" />
+                Recommended practice
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ol className="list-decimal pl-5 space-y-1 text-sm text-muted-foreground">
+                <li>Set up branches and default stores/labs before adding service points.</li>
+                <li>Name desks clearly for staff and for public displays (e.g. &quot;Consultation Room 2 — Paediatrics&quot;).</li>
+                <li>Assign staff to the desks they actually use; avoid giving every user access to every window.</li>
+                <li>At triage, always pick the consultation room the patient should wait at before they pay fees.</li>
+                <li>Confirm the desk selector on the queue dashboard matches where you are physically sitting.</li>
+              </ol>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="workflows" className="space-y-6 mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Patient Registration & Consultation Workflow
+              </CardTitle>
+              <CardDescription>
+                Complete workflow from patient registration to consultation completion
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-sm font-semibold text-primary">1</span>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <UserCheck className="h-4 w-4" />
+                      Patient Registration
+                    </h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Registration officer registers new patient in the system at the correct branch. Patient receives a unique Patient ID number. At facilities with multiple counters, select your registration desk on the Service Point Dashboard before queuing patients.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Departments → Registration or Queue → Service Point Dashboard</Badge>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center text-muted-foreground">
+                  <ArrowRight className="h-5 w-5" />
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-sm font-semibold text-primary">2</span>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <Calendar className="h-4 w-4" />
+                      Appointment or Queue Entry
+                    </h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Registration officer creates an appointment or adds patient to the appropriate service queue (e.g., Consultation, Laboratory). Use the desk selector when multiple windows or rooms exist at the branch.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Appointments, Queue Management, or Service Point Dashboard</Badge>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center text-muted-foreground">
+                  <ArrowRight className="h-5 w-5" />
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-sm font-semibold text-primary">3</span>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <HeartPulse className="h-4 w-4" />
+                      Triage Assessment (If Applicable)
+                    </h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Nurse performs triage assessment, records vital signs, assigns priority, selects the assigned doctor, and chooses the consultation room (or telemedicine) where the patient should go after fees are paid.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Triage Module or Triage queue on Service Point Dashboard</Badge>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center text-muted-foreground">
+                  <ArrowRight className="h-5 w-5" />
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-sm font-semibold text-primary">4</span>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <Clock className="h-4 w-4" />
+                      Queue Waiting
+                    </h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Patient waits in queue at the assigned service point (registration desk, consultation room, lab collection point, etc.). Queue status can be viewed on public displays filtered by room when configured.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Queue Management, Service Point Dashboard, or /display</Badge>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center text-muted-foreground">
+                  <ArrowRight className="h-5 w-5" />
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-sm font-semibold text-primary">5</span>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <Stethoscope className="h-4 w-4" />
+                      Doctor Consultation
+                    </h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Doctor calls patient from the consultation queue for their room, conducts consultation, documents clinical notes, diagnoses, and treatment plans in the medical record.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Queue → Service Point Dashboard → Consultation (select your room)</Badge>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center text-muted-foreground">
+                  <ArrowRight className="h-5 w-5" />
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-sm font-semibold text-primary">6</span>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <ClipboardList className="h-4 w-4" />
+                      Orders & Prescriptions
+                    </h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Doctor may order laboratory tests, radiology exams, prescribe medications, or schedule follow-up appointments as needed.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Medical Records or respective modules</Badge>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center text-muted-foreground">
+                  <ArrowRight className="h-5 w-5" />
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-sm font-semibold text-primary">7</span>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <DollarSign className="h-4 w-4" />
+                      Billing & Payment
+                    </h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Patient proceeds to billing/cashier. Bills are generated, payments are processed, and receipts are issued. Once all invoices are paid, patient is automatically removed from cashier queue.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Billing or Cashier Queue</Badge>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center text-muted-foreground">
+                  <ArrowRight className="h-5 w-5" />
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="text-sm font-semibold text-primary">8</span>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <Pill className="h-4 w-4" />
+                      Pharmacy (If Prescribed)
+                    </h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      If medications were prescribed, patient collects them from pharmacy. Pharmacy staff dispenses medications and updates inventory.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Pharmacy Module</Badge>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center text-muted-foreground">
+                  <ArrowRight className="h-5 w-5" />
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-green-500/10 flex items-center justify-center">
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      Visit Completion
+                    </h4>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Patient completes visit. All records are saved in the system for future reference.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FlaskConical className="h-5 w-5" />
+                Laboratory Test Workflow
+              </CardTitle>
+              <CardDescription>
+                Process for ordering, processing, and reviewing laboratory tests
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">1</Badge>
+                  <div>
+                    <p className="font-medium">Doctor orders laboratory test during consultation</p>
+                    <p className="text-sm text-muted-foreground">Order appears in Laboratory module automatically</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">2</Badge>
+                  <div>
+                    <p className="font-medium">Patient pays lab fees and joins the laboratory queue</p>
+                    <p className="text-sm text-muted-foreground">After payment or waiver, patient waits at the lab collection point. Staff at a specific lab unit select their desk on the Service Point Dashboard.</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">3</Badge>
+                  <div>
+                    <p className="font-medium">Patient provides sample at the laboratory</p>
+                    <p className="text-sm text-muted-foreground">Lab technician at the assigned unit receives and logs the sample</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">4</Badge>
+                  <div>
+                    <p className="font-medium">Lab technician processes test and enters results</p>
+                    <p className="text-sm text-muted-foreground">Results are verified and report is generated in the Laboratory module</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">5</Badge>
+                  <div>
+                    <p className="font-medium">Results available in patient&apos;s medical record</p>
+                    <p className="text-sm text-muted-foreground">Doctor reviews results and informs patient</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Pill className="h-5 w-5" />
+                Pharmacy Prescription Workflow
+              </CardTitle>
+              <CardDescription>
+                Medication prescription and dispensing process
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">1</Badge>
+                  <div>
+                    <p className="font-medium">Doctor prescribes medication during consultation</p>
+                    <p className="text-sm text-muted-foreground">Prescription appears in Pharmacy module</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">2</Badge>
+                  <div>
+                    <p className="font-medium">Patient goes to pharmacy</p>
+                    <p className="text-sm text-muted-foreground">Pharmacy staff reviews prescription</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">3</Badge>
+                  <div>
+                    <p className="font-medium">Pharmacy checks availability and drug interactions</p>
+                    <p className="text-sm text-muted-foreground">System validates prescription against inventory and patient allergies</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">4</Badge>
+                  <div>
+                    <p className="font-medium">Medication dispensed and inventory updated</p>
+                    <p className="text-sm text-muted-foreground">Patient receives medication with instructions</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <DollarSign className="h-5 w-5" />
+                Cashier Queue Payment Workflow
+              </CardTitle>
+              <CardDescription>
+                How to process payments in the cashier queue
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">1</Badge>
+                  <div>
+                    <p className="font-medium">Patient arrives at cashier queue</p>
+                    <p className="text-sm text-muted-foreground">Cashier selects patient from queue and clicks "View Bill"</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">2</Badge>
+                  <div>
+                    <p className="font-medium">View Bill dialog opens showing all pending invoices</p>
+                    <p className="text-sm text-muted-foreground">All invoices are automatically selected by default</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">3</Badge>
+                  <div>
+                    <p className="font-medium">Payment amount is auto-populated with total of selected invoices</p>
+                    <p className="text-sm text-muted-foreground">Cashier can adjust amount or deselect specific invoices if patient wants partial payment</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">4</Badge>
+                  <div>
+                    <p className="font-medium">Select payment method (Cash, M-Pesa, Card, etc.)</p>
+                    <p className="text-sm text-muted-foreground">Enter reference number if applicable (receipt number, transaction ID)</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">5</Badge>
+                  <div>
+                    <p className="font-medium">Review payment distribution</p>
+                    <p className="text-sm text-muted-foreground">System shows how payment will be distributed across selected invoices</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">6</Badge>
+                  <div>
+                    <p className="font-medium">Click "Process Payment"</p>
+                    <p className="text-sm text-muted-foreground">System processes payments, updates invoice status, and posts journal entries automatically</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">7</Badge>
+                  <div>
+                    <p className="font-medium">Automatic queue completion</p>
+                    <p className="text-sm text-muted-foreground">If all invoices are paid, patient is automatically removed from cashier queue and entry is archived to history</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BedDouble className="h-5 w-5" />
+                Inpatient Admission Workflow
+              </CardTitle>
+              <CardDescription>
+                Process for admitting patients to wards
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">1</Badge>
+                  <div>
+                    <p className="font-medium">Doctor decides patient needs admission</p>
+                    <p className="text-sm text-muted-foreground">Registration checks bed availability in appropriate ward</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">2</Badge>
+                  <div>
+                    <p className="font-medium">Patient assigned to ward and bed</p>
+                    <p className="text-sm text-muted-foreground">Nurse admits patient to ward and completes admission documentation</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">3</Badge>
+                  <div>
+                    <p className="font-medium">Daily rounds and documentation</p>
+                    <p className="text-sm text-muted-foreground">Medical staff document daily progress, medications, and observations</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">4</Badge>
+                  <div>
+                    <p className="font-medium">Discharge process</p>
+                    <p className="text-sm text-muted-foreground">Doctor decides discharge, nurse completes discharge process, final billing is processed</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Pill className="h-5 w-5" />
+                Nurse drug pickup request (end-to-end)
+              </CardTitle>
+              <CardDescription>
+                How nurses request medications for inpatients and how pharmacy fulfils and records the pickup
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">1</Badge>
+                  <div>
+                    <p className="font-medium">Nurse: Create a pickup request</p>
+                    <p className="text-sm text-muted-foreground">
+                      Go to <strong>Departments → Nursing → Drug Pickup Requests</strong>. Under &quot;New request&quot;, you see patients in your assigned wards with pending prescriptions. Select the items to request, add optional notes, and click <strong>Send Pickup Request</strong>.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Departments → Nursing → Drug Pickup Requests</Badge>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">2</Badge>
+                  <div>
+                    <p className="font-medium">Nurse: Track your requests</p>
+                    <p className="text-sm text-muted-foreground">
+                      Open the <strong>My request history</strong> tab to see all your requests. Status shows <strong>Pending</strong> (pharmacy not yet dispensed / not yet collected), <strong>Picked up</strong> (you have collected the drugs), or <strong>Cancelled</strong>.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Departments → Nursing → Drug Pickup Requests → My request history</Badge>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">3</Badge>
+                  <div>
+                    <p className="font-medium">Pharmacy: View pending requests</p>
+                    <p className="text-sm text-muted-foreground">
+                      Go to <strong>Pharmacy → Nurse Pickup</strong>. The <strong>Pending requests</strong> tab lists all requests from nurses. Dispense the prescription using the Prescriptions tab or the normal dispense flow.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Pharmacy → Nurse Pickup → Pending requests</Badge>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">4</Badge>
+                  <div>
+                    <p className="font-medium">Pharmacy: Record pickup when nurse collects</p>
+                    <p className="text-sm text-muted-foreground">
+                      After dispensing, the prescription appears under <strong>Ready for Pickup</strong>. When the nurse comes to collect, select the prescription and items and click <strong>Record Pickup</strong>. The system updates the nurse’s original request to <strong>Picked up</strong>.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Pharmacy → Nurse Pickup → Ready for Pickup</Badge>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">5</Badge>
+                  <div>
+                    <p className="font-medium">Nurse: Request shows as Picked up</p>
+                    <p className="text-sm text-muted-foreground">
+                      In <strong>My request history</strong>, the request status changes to <strong>Picked up</strong> once pharmacy has recorded the pickup. Pharmacy can also view <strong>Pickup History</strong> for a full list of all nurse pickups.
+                    </p>
+                    <Badge variant="outline" className="mt-2">Location: Departments → Nursing → Drug Pickup Requests (nurse); Pharmacy → Nurse Pickup → Pickup History (pharmacy)</Badge>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="modules" className="space-y-6 mt-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Patient Management
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Register new patients, manage patient records, view patient history, and access comprehensive patient information.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Calendar className="h-5 w-5" />
+                  Appointments
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Schedule, manage, and track patient appointments. View doctor schedules and appointment calendars.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ClipboardList className="h-5 w-5" />
+                  Queue Management
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Manage patient queues across all service points. Track wait times, call patients, and monitor queue status.
+                  Use <strong>Queue → Service Point Dashboard</strong> with the desk selector when multiple stations exist per branch.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5" />
+                  Medical Records
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Create and manage electronic health records. Document consultations, diagnoses, and treatment plans.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <DollarSign className="h-5 w-5" />
+                  Billing & Finance
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Generate invoices, process payments, manage receivables, and track financial transactions.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Pill className="h-5 w-5" />
+                  Pharmacy
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Manage prescriptions, dispense medications, track drug inventory, and monitor drug interactions.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FlaskConical className="h-5 w-5" />
+                  Laboratory
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Order lab tests, process samples, enter results, and generate laboratory reports. Filter by lab
+                  unit when multiple laboratories are configured per branch.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ImageIcon className="h-5 w-5" />
+                  Radiology
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Request imaging studies, manage radiology exams, store images, and generate radiology reports.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ShoppingCart className="h-5 w-5" />
+                  Inventory & Supply Chain
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Manage medical supplies, track inventory levels, create purchase orders, and manage vendors.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <UserCheck className="h-5 w-5" />
+                  Human Resources
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Manage employees, track schedules, process payroll, and handle leave management.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <MapPin className="h-5 w-5" />
+                  Service points &amp; desk assignments
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Administrators configure registration desks, triage bays, consultation rooms, and other queue
+                  stations under Settings. Assign staff to desks and link pharmacy/lab points to stores and lab units.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FlaskConical className="h-5 w-5" />
+                  Laboratory units (settings)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Define multiple lab units per branch (main lab, hematology, microbiology, etc.) and connect them
+                  to laboratory service points for scoped queues and worklists.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="quick-start" className="space-y-6 mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Getting Started</CardTitle>
+              <CardDescription>Quick guide for new users</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <h4 className="font-semibold">1. Logging In</h4>
+                <p className="text-sm text-muted-foreground">
+                  Use your username and password provided by your system administrator. Contact IT support if you need login credentials.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-semibold">2. Navigation</h4>
+                <p className="text-sm text-muted-foreground">
+                  Use the top navigation tabs to switch between main modules (Dashboard, Patient Care, Clinical Services, etc.). 
+                  Each category keeps its own colour while you work in that area. The left sidebar shows items within the current module.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-semibold">Your account &amp; appearance</h4>
+                <ul className="text-sm text-muted-foreground list-disc list-inside space-y-1">
+                  <li>
+                    Top right: <strong>Signed in as</strong> shows your name and role; the person icon opens password, two-factor, and settings.
+                  </li>
+                  <li>
+                    Theme icon: choose <strong>Professional Blue</strong> (default) or <strong>Light</strong> if dark mode feels too heavy.
+                  </li>
+                  <li>
+                    Patient chart documents: use <strong>View</strong> to open in the browser; allow pop-ups if prompted.
+                  </li>
+                  <li>
+                    Pharmacists and cashiers: open your <strong>desk</strong> from the sidebar (Pharmacy desk / Cashier desk), not the generic queue board, unless your role covers multiple counters.
+                  </li>
+                </ul>
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-semibold">3. Search Functionality</h4>
+                <p className="text-sm text-muted-foreground">
+                  Use the search bar at the top (desktop) and press Enter to open Patient Care with your search term — name, patient number, phone, or ID. Other modules have their own list filters.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-semibold">4. Common Actions</h4>
+                <ul className="text-sm text-muted-foreground list-disc list-inside space-y-1">
+                  <li>Click "Add" or "+" buttons to create new records</li>
+                  <li>Use the three-dot menu (⋯) for additional actions on items</li>
+                  <li>Click on any record to view details</li>
+                  <li>Use filters to narrow down search results</li>
+                  <li>Queue staff: open Service Point Dashboard and pick your working desk before serving patients</li>
+                </ul>
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-semibold">5. Queues, labs &amp; registration desks</h4>
+                <p className="text-sm text-muted-foreground">
+                  If your facility runs multiple counters or rooms, read the <strong>Queues &amp; labs</strong> tab
+                  for setup and daily use. Administrators start under Settings → Service points, Laboratory units,
+                  and Staff desk assignments.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Keyboard Shortcuts</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium">Search</p>
+                  <p className="text-xs text-muted-foreground">Ctrl+F / Cmd+F</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Save</p>
+                  <p className="text-xs text-muted-foreground">Ctrl+S / Cmd+S</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">New Record</p>
+                  <p className="text-xs text-muted-foreground">Ctrl+N / Cmd+N</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Refresh</p>
+                  <p className="text-xs text-muted-foreground">F5 / Cmd+R</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Close Dialog</p>
+                  <p className="text-xs text-muted-foreground">Esc</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="faq" className="space-y-6 mt-6">
+          <Accordion type="single" collapsible className="w-full">
+            <AccordionItem value="item-1">
+              <AccordionTrigger>How do I reset my password?</AccordionTrigger>
+              <AccordionContent>
+                Contact your system administrator or IT support to reset your password. They can reset it for you or provide instructions for self-service password reset.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-2">
+              <AccordionTrigger>What should I do if I can't find a patient?</AccordionTrigger>
+              <AccordionContent>
+                Use the top search bar and press Enter to go to Patient Care with your term, or open Patient Care and use the search field on that page. Search by name, patient number, phone, or national ID.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-3">
+              <AccordionTrigger>How do I process a payment in the cashier queue?</AccordionTrigger>
+              <AccordionContent>
+                Select the patient from the cashier queue, click "View Bill", select the invoices to pay (or use all selected), enter payment amount and method, then click "Process Payment". The system will automatically update invoices and remove the patient from queue when all invoices are paid.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-4">
+              <AccordionTrigger>Can I process partial payments?</AccordionTrigger>
+              <AccordionContent>
+                Yes! In the View Bill dialog, you can deselect specific invoices or adjust the payment amount. The system will distribute the payment across selected invoices and mark them as partially paid if the amount is less than the total.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-5">
+              <AccordionTrigger>What happens to queue entries after payment?</AccordionTrigger>
+              <AccordionContent>
+                When all invoices are paid, the queue entry is automatically marked as completed, archived to queue history (with service metrics), and removed from the active queue. This keeps the queue table small and fast while preserving complete history.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-6">
+              <AccordionTrigger>How do I view queue history?</AccordionTrigger>
+              <AccordionContent>
+                Queue history can be accessed through the Queue Management module. Use the history API endpoint or contact your system administrator to set up a history view page.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-7">
+              <AccordionTrigger>Where can I find system settings?</AccordionTrigger>
+              <AccordionContent>
+                System settings are available in the Administration module under "System Configuration". Only administrators have access to system settings.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-8">
+              <AccordionTrigger>How do I report a bug or issue?</AccordionTrigger>
+              <AccordionContent>
+                Contact your IT support team or system administrator. Provide details about the issue, steps to reproduce it, any error messages, and your user role.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-9">
+              <AccordionTrigger>How do I set up multiple registration desks or consultation rooms?</AccordionTrigger>
+              <AccordionContent>
+                Administrators add service points under Settings → Service points (one per desk or room, with the correct type: registration, consultation, etc.). Assign staff under Settings → Staff desk assignments. See the Help → Queues &amp; labs tab for the full workflow including triage room selection and public displays.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-10">
+              <AccordionTrigger>Why does my queue list show no patients while colleagues see patients?</AccordionTrigger>
+              <AccordionContent>
+                You may be filtered to a different working desk. On Queue → Service Point Dashboard, check the desk selector (top right). Each registration window, consultation room, cashier counter, or lab desk has its own queue. Select the station where you are physically working.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-11">
+              <AccordionTrigger>How do multiple laboratory units work?</AccordionTrigger>
+              <AccordionContent>
+                Settings → Laboratory units defines lab sections per branch (e.g. main lab, hematology). Link each to a laboratory-type service point. Lab staff choose their unit from the desk selector on the Service Point Dashboard; orders and queues can then be scoped to that lab.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="item-12">
+              <AccordionTrigger>Can I show a waiting-room display for one consultation room only?</AccordionTrigger>
+              <AccordionContent>
+                Yes. Open the public display at /display with query parameters, for example: ?servicePoint=consultation&amp;servicePointId= followed by the service point ID from Settings → Service points. Mount a screen in that room so patients see only that room&apos;s queue.
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+export default function HelpPage() {
+  return (
+    <Suspense fallback={<div className="flex flex-col gap-6 p-8 text-muted-foreground">Loading help…</div>}>
+      <HelpPageContent />
+    </Suspense>
+  )
+}

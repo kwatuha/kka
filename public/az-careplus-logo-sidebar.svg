@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 88" role="img" aria-label="AZ CarePlus Hospital MIS">
+  <defs>
+    <linearGradient id="azcp-sidebar-icon" x1="8%" y1="0%" x2="92%" y2="100%">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="42%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0f4c75"/>
+    </linearGradient>
+    <linearGradient id="azcp-sidebar-shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="azcp-sidebar-panel" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.04"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="6" width="332" height="76" rx="16" fill="url(#azcp-sidebar-panel)" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+  <g transform="translate(16 12)">
+    <rect x="0" y="0" width="64" height="64" rx="20" fill="url(#azcp-sidebar-icon)"/>
+    <rect x="0" y="0" width="64" height="32" rx="20" fill="url(#azcp-sidebar-shine)"/>
+    <rect x="0" y="0" width="64" height="64" rx="20" fill="none" stroke="rgba(255,255,255,0.32)" stroke-width="1.5"/>
+    <path d="M32 19v26M19 32h26" stroke="#ffffff" stroke-width="4.75" stroke-linecap="round"/>
+    <circle cx="32" cy="32" r="22" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+  </g>
+  <text x="96" y="38" fill="#ffffff" font-family="system-ui,Segoe UI,Roboto,sans-serif" font-size="22" font-weight="700">
+    <tspan fill="#f0f9ff">AZ </tspan><tspan fill="#e0f2fe">Care</tspan><tspan fill="#bae6fd" font-weight="800">Plus</tspan>
+  </text>
+  <line x1="96" y1="48" x2="118" y2="48" stroke="rgba(125,211,252,0.55)" stroke-width="1"/>
+  <text x="124" y="48" fill="rgba(219,234,254,0.78)" font-family="system-ui,Segoe UI,Roboto,sans-serif" font-size="10" font-weight="600" letter-spacing="0.18em">HOSPITAL MIS</text>
+  <line x1="248" y1="48" x2="270" y2="48" stroke="rgba(125,211,252,0.35)" stroke-width="1"/>
+</svg>

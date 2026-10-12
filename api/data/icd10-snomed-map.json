@@ -1,0 +1,25 @@
+{
+  "_note": "Sandbox ICD-10 to SNOMED CT map for problem list and FHIR narrative. Expand with national terminology service when available.",
+  "mappings": [
+    { "icd10": "A00.9", "snomed": "63650001", "display": "Cholera" },
+    { "icd10": "A09.9", "snomed": "409966000", "display": "Acute gastroenteritis" },
+    { "icd10": "A15.9", "snomed": "56717001", "display": "Tuberculosis" },
+    { "icd10": "B05.9", "snomed": "14189004", "display": "Measles" },
+    { "icd10": "B50.9", "snomed": "61462000", "display": "Malaria" },
+    { "icd10": "E11.9", "snomed": "44054006", "display": "Type 2 diabetes mellitus" },
+    { "icd10": "I10", "snomed": "38341003", "display": "Essential hypertension" },
+    { "icd10": "J06.9", "snomed": "54398005", "display": "Acute upper respiratory infection" },
+    { "icd10": "J18.9", "snomed": "233604007", "display": "Pneumonia" },
+    { "icd10": "O80.9", "snomed": "177184002", "display": "Normal delivery" },
+    { "icd10": "Z00.0", "snomed": "268565007", "display": "General medical examination" },
+    { "icd10": "E10.9", "snomed": "46635009", "display": "Type 1 diabetes mellitus" },
+    { "icd10": "I20.9", "snomed": "194828000", "display": "Angina pectoris" },
+    { "icd10": "J45.9", "snomed": "195967001", "display": "Asthma" },
+    { "icd10": "N39.0", "snomed": "68566005", "display": "Urinary tract infection" },
+    { "icd10": "K29.7", "snomed": "235595009", "display": "Gastritis" },
+    { "icd10": "F32.9", "snomed": "35489007", "display": "Depressive episode" },
+    { "icd10": "S72.0", "snomed": "263184000", "display": "Fracture of neck of femur" },
+    { "icd10": "O14.9", "snomed": "48194001", "display": "Pre-eclampsia" },
+    { "icd10": "Z34.9", "snomed": "77386006", "display": "Supervision of normal pregnancy" }
+  ]
+}

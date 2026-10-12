@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1.5
+# Multi-stage: `npm ci` + `next build` run at **image build** time (docker compose build / CI).
+# The running container only serves `out/` with `serve` — starts in seconds, minimal RAM (~200MiB).
+#
+# Required at build time (browser-embedded): pass build args from compose or:
+#   docker build -f Dockerfile.prod --build-arg NEXT_PUBLIC_API_URL=https://api.example.com .
+#
+# For volume-mounted dev/fast deploy (install at container start), use Dockerfile.prod.runtime instead.
+
+FROM node:18-slim AS builder
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package*.json ./
+# postinstall runs scripts/copy-zoom-sdk-css.mjs — must exist before npm ci
+COPY scripts/ ./scripts/
+RUN npm ci --legacy-peer-deps
+
+COPY tsconfig.json next.config.mjs tailwind.config.ts postcss.config.mjs components.json ./
+COPY app/ ./app/
+COPY components/ ./components/
+COPY lib/ ./lib/
+COPY public/ ./public/
+COPY styles/ ./styles/
+COPY hooks/ ./hooks/
+
+ARG NEXT_PUBLIC_API_URL=
+ARG NEXT_PUBLIC_BASE_URL=
+ARG NEXT_PUBLIC_PRODUCT_NAME=AZ CarePlus
+ARG NEXT_PUBLIC_APP_BRAND=AZ CarePlus
+ARG NEXT_PUBLIC_EXPERIENCE_PACK=
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV DOCKER_BUILD=true
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL}
+ENV NEXT_PUBLIC_PRODUCT_NAME=${NEXT_PUBLIC_PRODUCT_NAME}
+ENV NEXT_PUBLIC_APP_BRAND=${NEXT_PUBLIC_APP_BRAND}
+ENV NEXT_PUBLIC_EXPERIENCE_PACK=${NEXT_PUBLIC_EXPERIENCE_PACK}
+
+RUN npm run build
+
+# Next static export is flat under out/; asset URLs use /hmis/_next/... so we serve a parent dir with an hmis/ subfolder.
+RUN test -f /app/out/index.html || (echo "ERROR: missing out/index.html after next build" && ls -la /app/out 2>&1 | head -30 && exit 1)
+
+FROM node:18-slim AS runner
+RUN apt-get update && apt-get install -y wget ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/hmis-static-server
+COPY deploy/hmis-static-server.cjs ./
+RUN npm init -y >/dev/null 2>&1 && npm install serve-handler@6.1.6 --omit=dev
+
+# /srv/hmis/* → browser paths /hmis/* (matches basePath in next.config)
+WORKDIR /srv
+COPY --from=builder /app/out ./hmis
+# Deep links to /hmis/patients/123 etc.: static export only has __export_placeholder__ HTML
+COPY deploy/serve-hmis.json ./serve.json
+RUN chown -R node:node /srv /opt/hmis-static-server
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HMIS_STATIC_ROOT=/srv
+ENV HMIS_STATIC_PORT=3000
+ENV HOSTNAME=0.0.0.0
+EXPOSE 3000
+USER node
+CMD ["node", "/opt/hmis-static-server/hmis-static-server.cjs"]

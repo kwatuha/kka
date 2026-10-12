@@ -1,0 +1,29 @@
+# Development Dockerfile with production build option
+# This allows building production inside the container for testing
+FROM node:18
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm cache clean --force && \
+    npm install --legacy-peer-deps
+
+# Copy application code
+COPY . .
+
+# Copy entrypoint script
+COPY docker-entrypoint-frontend.sh /usr/local/bin/docker-entrypoint-frontend.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint-frontend.sh
+
+# Expose Next.js port
+EXPOSE 3000
+
+# Use entrypoint
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-frontend.sh"]
+
+# Default to dev mode, can be overridden in docker-compose
+CMD ["npm", "run", "dev:legacy"]
+
+
+

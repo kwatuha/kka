@@ -1,0 +1,89 @@
+# Production Docker Compose Configuration
+
+services:
+  # MySQL Database
+  mysql_db:
+    image: mysql:8.0
+    container_name: kiplombe_mysql_prod
+    restart: always
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-kiplombe_hmis}
+      MYSQL_USER: ${MYSQL_USER:-kiplombe_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-kiplombe_password}
+    volumes:
+      - ./api/database/schema.sql:/docker-entrypoint-initdb.d/init.sql
+      - db_data_prod:/var/lib/mysql
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Server
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: kiplombe_api_prod
+    restart: unless-stopped
+    expose:
+      - "3001"
+    volumes:
+      - ./api:/app
+      - /app/node_modules
+      - api_uploads_prod:/app/uploads
+    depends_on:
+      mysql_db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DB_HOST: mysql_db
+      DB_USER: ${MYSQL_USER:-kiplombe_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-kiplombe_password}
+      DB_NAME: ${MYSQL_DATABASE:-kiplombe_hmis}
+      DB_PORT: 3306
+      JWT_SECRET: ${JWT_SECRET:-your_super_secret_jwt_key_change_this_in_production}
+      PORT: 3001
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:3001}
+    command: npm start
+
+  # Frontend (Next.js) - Production Build
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-}
+    container_name: kiplombe_frontend_prod
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+    depends_on:
+      - api
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: kiplombe_nginx_prod
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - frontend
+      - api
+
+volumes:
+  db_data_prod:
+  api_uploads_prod:
+  nginx_cache:

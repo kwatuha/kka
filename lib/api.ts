@@ -1,0 +1,3905 @@
+// API utility functions for making requests to the backend
+
+// Use relative URLs when in browser (same origin), or use NEXT_PUBLIC_API_URL if set
+// This allows the API to work both in development and production behind nginx
+const API_BASE_URL = typeof window !== 'undefined'
+  ? (process.env.NEXT_PUBLIC_API_URL || '')  // Empty string = relative URLs (same origin)
+  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');  // Server-side needs absolute URL
+
+interface ApiOptions {
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  body?: any;
+  headers?: Record<string, string>;
+  /** Abort request after this many ms (avoids infinite hang if API is unreachable). */
+  timeoutMs?: number;
+}
+
+export type MpesaPublicConfig = {
+  configured: boolean;
+  provider?: 'daraja' | 'cloudsasa' | null;
+  callbackConfigured: boolean;
+  stkEnabled?: boolean;
+  showPaybillInstructions?: boolean;
+  paybillNumber?: string;
+  accountPrefix?: string;
+  accountReferenceMode?: string;
+  accountReferenceExample?: string;
+  stkPaybillNumber?: string;
+  mpesaEnv?: string;
+  sandboxStkNote?: string;
+};
+
+export type MpesaAdminSettings = {
+  settingId?: number;
+  paybillNumber: string;
+  accountPrefix: string;
+  accountReferenceMode: string;
+  stkEnabled: boolean;
+  showPaybillInstructions: boolean;
+  notes?: string | null;
+  stkConfigured?: boolean;
+  callbackConfigured?: boolean;
+  updatedAt?: string;
+};
+
+export type MpesaRegisterResponse = {
+  page: number;
+  limit: number;
+  total: number;
+  items: Array<{
+    stkPaymentId: number;
+    checkoutRequestId: string;
+    status: string;
+    amount: number;
+    phone: string;
+    paybillNumber?: string | null;
+    accountReference?: string | null;
+    patientId?: number | null;
+    mpesaReceiptNumber?: string | null;
+    resultDesc?: string | null;
+    appliedAt?: string | null;
+    createdAt?: string;
+    patientNumber?: string | null;
+    patientFirstName?: string | null;
+    patientLastName?: string | null;
+  }>;
+};
+
+/** Parse error message from failed response body (JSON or HTML/text from proxies). */
+function parseFailedResponseBodyText(rawText: string, status: number, statusText: string): string {
+  const trimmed = rawText?.trim() || '';
+  if (!trimmed) {
+    return `Request failed (${status} ${statusText || ''})`.trim();
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object') {
+      return (
+        (parsed.error as string) ||
+        (parsed.message as string) ||
+        (parsed.msg as string) ||
+        `HTTP error! status: ${status}`
+      );
+    }
+  } catch {
+    return trimmed.length > 400 ? `${trimmed.slice(0, 200)}… (${status})` : `${trimmed} (${status})`;
+  }
+  return `HTTP error! status: ${status}`;
+}
+
+function getStoredAuthToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return (
+    localStorage.getItem('token') ||
+    localStorage.getItem('jwt_token') ||
+    localStorage.getItem('auth_token')
+  )
+}
+
+function filenameFromContentDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header)
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1].trim().replace(/^"|"$/g, ''))
+    } catch {
+      return utf8[1].trim().replace(/^"|"$/g, '')
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header)
+  return plain?.[1]?.trim() || fallback
+}
+
+/** Authenticated binary download (for window.open-safe blob URLs). */
+async function fetchAuthMultipart(
+  endpoint: string,
+  formData: FormData,
+  timeoutMs = 120_000
+): Promise<Response> {
+  const token = getStoredAuthToken();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const currentBranchId =
+    typeof window !== 'undefined' ? localStorage.getItem('current_branch_id') : null;
+  const currentPharmacyStoreId =
+    typeof window !== 'undefined' ? localStorage.getItem('current_pharmacy_store_id') : null;
+  const currentLaboratoryId =
+    typeof window !== 'undefined' ? localStorage.getItem('current_laboratory_id') : null;
+  const currentServicePointId =
+    typeof window !== 'undefined' ? localStorage.getItem('current_service_point_id') : null;
+
+  try {
+    return await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(currentBranchId ? { 'X-Branch-Id': currentBranchId } : {}),
+        ...(currentPharmacyStoreId ? { 'X-Pharmacy-Store-Id': currentPharmacyStoreId } : {}),
+        ...(currentLaboratoryId ? { 'X-Laboratory-Id': currentLaboratoryId } : {}),
+        ...(currentServicePointId ? { 'X-Service-Point-Id': currentServicePointId } : {}),
+      },
+      body: formData,
+      signal: controller.signal,
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `Upload timed out after ${Math.round(timeoutMs / 1000)}s. Check your connection or try a smaller file.`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchAuthenticatedBlob(
+  endpoint: string,
+  fallbackFilename = 'download',
+  options?: { ifNoneMatch?: string; timeoutMs?: number }
+): Promise<{ blob: Blob; filename: string; etag: string | null; notModified: boolean }> {
+  const token = getStoredAuthToken()
+  const timeoutMs = options?.timeoutMs ?? 90_000
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options?.ifNoneMatch ? { 'If-None-Match': options.ifNoneMatch } : {}),
+      },
+      signal: controller.signal,
+    })
+    if (res.status === 304) {
+      return { blob: new Blob(), filename: fallbackFilename, etag: options?.ifNoneMatch ?? null, notModified: true }
+    }
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(parseFailedResponseBodyText(text, res.status, res.statusText))
+    }
+    const blob = await res.blob()
+    const filename = filenameFromContentDisposition(
+      res.headers.get('Content-Disposition'),
+      fallbackFilename
+    )
+    const etag = res.headers.get('ETag')
+    return { blob, filename, etag, notModified: false }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Download timed out after ${Math.round(timeoutMs / 1000)}s`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+/** Open or save an authenticated blob in the browser. */
+export function openAuthenticatedBlob(
+  blob: Blob,
+  filename: string,
+  mode: 'view' | 'download' = 'download'
+) {
+  const url = URL.createObjectURL(blob)
+  if (mode === 'view') {
+    const win = window.open(url, '_blank')
+    if (!win) {
+      // Popup blocked — fall back to download
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+    }
+  } else {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
+  // Revoke after the browser has a chance to load the blob
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
+async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
+  const { method = 'GET', body, headers = {}, timeoutMs } = options;
+
+  // Get token from localStorage (could be JWT from backend or simple token from frontend)
+  let token: string | null = null;
+  if (typeof window !== 'undefined') {
+    // Try to get JWT token from backend login (stored as 'token' or 'jwt_token')
+    token = localStorage.getItem('token') ||
+            localStorage.getItem('jwt_token') ||
+            localStorage.getItem('auth_token');
+  }
+  const currentBranchId = typeof window !== 'undefined'
+    ? localStorage.getItem('current_branch_id')
+    : null;
+  const currentPharmacyStoreId = typeof window !== 'undefined'
+    ? localStorage.getItem('current_pharmacy_store_id')
+    : null;
+  const currentLaboratoryId = typeof window !== 'undefined'
+    ? localStorage.getItem('current_laboratory_id')
+    : null;
+  const currentServicePointId = typeof window !== 'undefined'
+    ? localStorage.getItem('current_service_point_id')
+    : null;
+
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  }
+
+  const config: RequestInit = {
+    method,
+    signal: controller.signal,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+      ...(currentBranchId && { 'X-Branch-Id': currentBranchId }),
+      ...(currentPharmacyStoreId && { 'X-Pharmacy-Store-Id': currentPharmacyStoreId }),
+      ...(currentLaboratoryId && { 'X-Laboratory-Id': currentLaboratoryId }),
+      ...(currentServicePointId && { 'X-Service-Point-Id': currentServicePointId }),
+      ...headers,
+    },
+  };
+
+  if (body) {
+    config.body = JSON.stringify(body);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      const base =
+        typeof window !== 'undefined'
+          ? process.env.NEXT_PUBLIC_API_URL || '(same origin — set NEXT_PUBLIC_API_URL to your API host if the app runs on a different port)'
+          : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      throw new Error(
+        timeoutMs
+          ? `Request timed out after ${timeoutMs}ms. The API may be slow, the database busy, or the request never reached the backend. ` +
+              `Configured API base: ${base}. ` +
+              `For local dev, set NEXT_PUBLIC_API_URL to your API (e.g. http://localhost:3101) and restart Next.js.`
+          : 'Request was cancelled.'
+      );
+    }
+    const msg = err?.message || String(err);
+    if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
+      throw new Error('Unable to reach the server. Retrying usually works if the connection is busy.');
+    }
+    throw err;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    // If 401, try to clear invalid token
+    if (response.status === 401 && typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('jwt_token');
+      localStorage.removeItem('auth_token');
+    }
+
+    const rawText = await response.text();
+    const errorMessage = parseFailedResponseBodyText(rawText, response.status, response.statusText);
+    const fullError = new Error(errorMessage);
+    // Attach additional error details for debugging
+    (fullError as any).status = response.status;
+    try {
+      const parsed = rawText ? JSON.parse(rawText) : null;
+      (fullError as any).response = parsed;
+      if (parsed && typeof parsed === 'object' && parsed.code) {
+        (fullError as any).code = parsed.code;
+      }
+    } catch {
+      (fullError as any).response = { raw: rawText?.slice(0, 500) };
+    }
+    throw fullError;
+  }
+
+  return response.json();
+}
+
+// Patient API
+export const geographyApi = {
+  getCounties: () =>
+    apiRequest<{ data: string[] }>('/api/geography/kenya-wards/counties').then((r) => r.data || []),
+  getSubcounties: (county: string) =>
+    apiRequest<{ data: string[] }>(
+      `/api/geography/kenya-wards/subcounties?${new URLSearchParams({ county })}`
+    ).then((r) => r.data || []),
+  getWards: (county: string, subcounty: string) =>
+    apiRequest<{ data: { id: number; name: string; pcode: string | null }[] }>(
+      `/api/geography/kenya-wards/wards?${new URLSearchParams({ county, subcounty })}`
+    ).then((r) => r.data || []),
+  getStats: () => apiRequest<{ data: { total: number; counties: number; subcounties: number } }>(
+    '/api/geography/kenya-wards/stats'
+  ),
+}
+
+export const patientApi = {
+  getAll: (search?: string, page = 1, limit = 25) =>
+    apiRequest<any[]>(`/api/patients?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }) })}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/patients/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/patients', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/patients/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/patients/${id}`, { method: 'DELETE' }),
+
+  // Patient allergies
+  getAllergies: (patientId: string) =>
+    apiRequest<any[]>(`/api/patients/${patientId}/allergies`),
+
+  getAllergy: (patientId: string, allergyId: string) =>
+    apiRequest<any>(`/api/patients/${patientId}/allergies/${allergyId}`),
+
+  createAllergy: (patientId: string, data: any) =>
+    apiRequest<any>(`/api/patients/${patientId}/allergies`, { method: 'POST', body: data }),
+
+  updateAllergy: (patientId: string, allergyId: string, data: any) =>
+    apiRequest<any>(`/api/patients/${patientId}/allergies/${allergyId}`, { method: 'PUT', body: data }),
+
+  deleteAllergy: (patientId: string, allergyId: string) =>
+    apiRequest<any>(`/api/patients/${patientId}/allergies/${allergyId}`, { method: 'DELETE' }),
+
+  // Patient NCD care
+  getNcd: (patientId: string) =>
+    apiRequest<{ conditions: any[]; followUps: any[] }>(`/api/patients/${patientId}/ncd`),
+
+  createNcdCondition: (patientId: string, data: any) =>
+    apiRequest<any>(`/api/patients/${patientId}/ncd/conditions`, { method: 'POST', body: data }),
+
+  updateNcdCondition: (patientId: string, ncdId: string, data: any) =>
+    apiRequest<any>(`/api/patients/${patientId}/ncd/conditions/${ncdId}`, { method: 'PUT', body: data }),
+
+  deleteNcdCondition: (patientId: string, ncdId: string) =>
+    apiRequest<any>(`/api/patients/${patientId}/ncd/conditions/${ncdId}`, { method: 'DELETE' }),
+
+  createNcdFollowUp: (patientId: string, data: any) =>
+    apiRequest<any>(`/api/patients/${patientId}/ncd/follow-ups`, { method: 'POST', body: data }),
+
+  updateNcdFollowUp: (patientId: string, followUpId: string, data: any) =>
+    apiRequest<any>(`/api/patients/${patientId}/ncd/follow-ups/${followUpId}`, { method: 'PUT', body: data }),
+
+  getDataExport: (patientId: string) =>
+    apiRequest<any>(`/api/patients/${patientId}/data-export`),
+
+  getConsents: (patientId: string) =>
+    apiRequest<{ consents: any[] }>(`/api/patients/${patientId}/consents`),
+
+  createConsent: (
+    patientId: string,
+    data: {
+      consentType: string
+      granted: boolean
+      signatureName?: string
+      notes?: string
+    }
+  ) =>
+    apiRequest<any>(`/api/patients/${patientId}/consents`, { method: 'POST', body: data }),
+
+  revokeConsent: (
+    patientId: string,
+    data: { consentType: string; reason?: string; signatureName?: string }
+  ) =>
+    apiRequest<any>(`/api/patients/${patientId}/consents/revoke`, { method: 'POST', body: data }),
+
+  deleteNcdFollowUp: (patientId: string, followUpId: string) =>
+    apiRequest<any>(`/api/patients/${patientId}/ncd/follow-ups/${followUpId}`, { method: 'DELETE' }),
+
+        // Patient vitals
+        getVitals: (patientId: string, today?: boolean, date?: string) => {
+          const params = new URLSearchParams();
+          if (today) params.append('today', 'true');
+          if (date) params.append('date', date);
+          return apiRequest<any[]>(`/api/patients/${patientId}/vitals${params.toString() ? `?${params.toString()}` : ''}`);
+        },
+
+        // Get all vital signs from today
+        getTodayVitals: () =>
+          apiRequest<any[]>(`/api/patients/vitals/today`),
+
+        // Patient family history
+        getFamilyHistory: (patientId: string) =>
+          apiRequest<any[]>(`/api/patients/${patientId}/family-history`),
+
+        createFamilyHistory: (patientId: string, data: any) =>
+          apiRequest<any>(`/api/patients/${patientId}/family-history`, { method: 'POST', body: data }),
+
+        updateFamilyHistory: (patientId: string, id: string, data: any) =>
+          apiRequest<any>(`/api/patients/${patientId}/family-history/${id}`, { method: 'PUT', body: data }),
+
+        deleteFamilyHistory: (patientId: string, id: string) =>
+          apiRequest<any>(`/api/patients/${patientId}/family-history/${id}`, { method: 'DELETE' }),
+
+        getProblems: (patientId: string, includeResolved = false) =>
+          apiRequest<any[]>(
+            `/api/patients/${patientId}/problems${includeResolved ? '?includeResolved=1' : ''}`
+          ),
+
+        createProblem: (patientId: string, data: any) =>
+          apiRequest<any>(`/api/patients/${patientId}/problems`, { method: 'POST', body: data }),
+
+        updateProblem: (patientId: string, problemId: string, data: any) =>
+          apiRequest<any>(`/api/patients/${patientId}/problems/${problemId}`, {
+            method: 'PUT',
+            body: data,
+          }),
+
+        lookupProblemSnomed: (patientId: string, icd10: string) =>
+          apiRequest<{ icd10?: string; snomed?: string; display?: string }>(
+            `/api/patients/${patientId}/problems/snomed-lookup?${new URLSearchParams({ icd10 })}`
+          ),
+
+        // Patient documents
+        getDocuments: (patientId: string) =>
+          apiRequest<any[]>(`/api/patients/${patientId}/documents`),
+
+        createDocument: (patientId: string, formData: FormData) =>
+          fetchAuthMultipart(`/api/patients/${patientId}/documents`, formData).then(async (res) => {
+            if (!res.ok) {
+              const text = await res.text();
+              throw new Error(parseFailedResponseBodyText(text, res.status, res.statusText));
+            }
+            return res.json();
+          }),
+
+        updateDocument: (patientId: string, documentId: string, data: any) =>
+          apiRequest<any>(`/api/patients/${patientId}/documents/${documentId}`, { method: 'PUT', body: data }),
+
+        deleteDocument: (patientId: string, documentId: string) =>
+          apiRequest<any>(`/api/patients/${patientId}/documents/${documentId}`, { method: 'DELETE' }),
+
+        /** Fetch document bytes with Authorization (do not window.open the raw URL). */
+        downloadDocument: (
+          patientId: string,
+          documentId: string,
+          fallbackFilename = 'document',
+          ifNoneMatch?: string
+        ) =>
+          fetchAuthenticatedBlob(
+            `/api/patients/${patientId}/documents/${documentId}/download`,
+            fallbackFilename,
+            ifNoneMatch ? { ifNoneMatch } : undefined
+          ),
+      };
+
+// Department API
+export const departmentApi = {
+  getAll: (search?: string) =>
+    apiRequest<any[]>(`/api/departments?${new URLSearchParams(search ? { search } : {})}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/departments/${id}`),
+
+  getEmployees: (id: string) =>
+    apiRequest<any[]>(`/api/departments/${id}/employees`),
+
+  getPositions: (id: string) =>
+    apiRequest<any[]>(`/api/departments/${id}/positions`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/departments', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/departments/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/departments/${id}`, { method: 'DELETE' }),
+};
+
+// Pharmacy API
+export const pharmacyApi = {
+  // Medications
+  getMedications: (search?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/pharmacy/medications?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }) })}`),
+
+  getMedication: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/medications/${id}`),
+
+  createMedication: (data: any) =>
+    apiRequest<any>('/api/pharmacy/medications', { method: 'POST', body: data }),
+
+  updateMedication: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/medications/${id}`, { method: 'PUT', body: data }),
+
+  deleteMedication: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/medications/${id}`, { method: 'DELETE' }),
+
+  // Prescriptions
+  getPrescriptions: (patientId?: string, status?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/pharmacy/prescriptions?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(patientId && { patientId }), ...(status && { status }) })}`),
+
+  getPrescription: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/prescriptions/${id}`),
+
+  createPrescription: (data: any) =>
+    apiRequest<any>('/api/pharmacy/prescriptions', { method: 'POST', body: data }),
+
+  updatePrescription: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/prescriptions/${id}`, { method: 'PUT', body: data }),
+
+  // Inventory
+  getInventory: () =>
+    apiRequest<any[]>('/api/pharmacy/inventory'),
+
+  // Drug Inventory
+  getDrugInventory: (medicationId?: string, search?: string, page = 1, limit = 50, location?: string, storeId?: string, branchId?: string) =>
+    apiRequest<any[]>(`/api/pharmacy/drug-inventory?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(medicationId && { medicationId }), ...(search && { search }), ...(location && { location }), ...(storeId && { storeId }), ...(branchId && { branchId }) })}`),
+
+  getDrugInventorySummary: (search?: string, page = 1, limit = 100) =>
+    apiRequest<{ data: any[], pagination: any }>(`/api/pharmacy/drug-inventory/summary?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }) })}`),
+
+  getInventoryValueByLocation: (filters?: { location?: string; search?: string; dateFrom?: string; dateTo?: string }) => {
+    const params = new URLSearchParams()
+    if (filters?.location && filters.location !== 'all') params.append('location', filters.location)
+    if (filters?.search) params.append('search', filters.search)
+    if (filters?.dateFrom) params.append('dateFrom', filters.dateFrom)
+    if (filters?.dateTo) params.append('dateTo', filters.dateTo)
+    return apiRequest<{ data: any[]; totals: { quantity: number; amountValue: number } }>(`/api/pharmacy/drug-inventory/value-by-location?${params.toString()}`)
+  },
+
+  getDrugInventoryItem: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`),
+
+  createDrugInventoryItem: (data: any) =>
+    apiRequest<any>('/api/pharmacy/drug-inventory', { method: 'POST', body: data }),
+
+  updateDrugInventoryItem: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`, { method: 'PUT', body: data }),
+
+  deleteDrugInventoryItem: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/${id}`, { method: 'DELETE' }),
+
+  // Branches
+  getBranches: (search?: string, isActive?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (isActive) params.append('isActive', isActive);
+    return apiRequest<any[]>(`/api/pharmacy/branches?${params.toString()}`);
+  },
+
+  getBranch: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/branches/${id}`),
+
+  createBranch: (data: any) =>
+    apiRequest<any>('/api/pharmacy/branches', { method: 'POST', body: data }),
+
+  updateBranch: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/branches/${id}`, { method: 'PUT', body: data }),
+
+  deleteBranch: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/branches/${id}`, { method: 'DELETE' }),
+
+  // Drug Stores
+  getDrugStores: (branchId?: string, search?: string, isActive?: string, isDispensingStore?: string) => {
+    const params = new URLSearchParams();
+    if (branchId) params.append('branchId', branchId);
+    if (search) params.append('search', search);
+    if (isActive) params.append('isActive', isActive);
+    if (isDispensingStore) params.append('isDispensingStore', isDispensingStore);
+    return apiRequest<any[]>(`/api/pharmacy/drug-stores?${params.toString()}`);
+  },
+
+  getDrugStore: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-stores/${id}`),
+
+  createDrugStore: (data: any) =>
+    apiRequest<any>('/api/pharmacy/drug-stores', { method: 'POST', body: data }),
+
+  updateDrugStore: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/drug-stores/${id}`, { method: 'PUT', body: data }),
+
+  deleteDrugStore: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-stores/${id}`, { method: 'DELETE' }),
+
+  // Stock transfers between stores/branches
+  getStockTransfers: (filters?: { status?: string; fromStoreId?: string; toStoreId?: string; branchId?: string; search?: string; page?: number; limit?: number }) => {
+    const params = new URLSearchParams()
+    if (filters?.status) params.append('status', filters.status)
+    if (filters?.fromStoreId) params.append('fromStoreId', filters.fromStoreId)
+    if (filters?.toStoreId) params.append('toStoreId', filters.toStoreId)
+    if (filters?.branchId) params.append('branchId', filters.branchId)
+    if (filters?.search) params.append('search', filters.search)
+    if (filters?.page) params.append('page', String(filters.page))
+    if (filters?.limit) params.append('limit', String(filters.limit))
+    return apiRequest<any[]>(`/api/pharmacy/stock-transfers?${params.toString()}`)
+  },
+
+  getStockTransfer: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/stock-transfers/${id}`),
+
+  createStockTransfer: (data: any) =>
+    apiRequest<any>('/api/pharmacy/stock-transfers', { method: 'POST', body: data }),
+
+  updateStockTransferStatus: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/stock-transfers/${id}/status`, { method: 'PATCH', body: data }),
+
+  // External chemist stock supply requests
+  getChemistStockRequests: (filters?: { status?: string; chemistId?: string; sourceStoreId?: string; search?: string; page?: number; limit?: number }) => {
+    const params = new URLSearchParams()
+    if (filters?.status) params.append('status', filters.status)
+    if (filters?.chemistId) params.append('chemistId', filters.chemistId)
+    if (filters?.sourceStoreId) params.append('sourceStoreId', filters.sourceStoreId)
+    if (filters?.search) params.append('search', filters.search)
+    if (filters?.page) params.append('page', String(filters.page))
+    if (filters?.limit) params.append('limit', String(filters.limit))
+    return apiRequest<any[]>(`/api/pharmacy/chemist-stock-requests?${params.toString()}`)
+  },
+
+  getChemistStockRequest: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/chemist-stock-requests/${id}`),
+
+  createChemistStockRequest: (data: any) =>
+    apiRequest<any>('/api/pharmacy/chemist/stock-requests', { method: 'POST', body: data }),
+
+  updateChemistStockRequestStatus: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/chemist-stock-requests/${id}/status`, { method: 'PATCH', body: data }),
+
+  // Reorder levels
+  getStoreReorderLevels: (storeId: string) =>
+    apiRequest<any[]>(`/api/pharmacy/drug-stores/${storeId}/reorder-levels`),
+
+  createStoreReorderLevel: (storeId: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/drug-stores/${storeId}/reorder-levels`, { method: 'POST', body: data }),
+
+  updateReorderLevel: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/reorder-levels/${id}`, { method: 'PUT', body: data }),
+
+  deleteReorderLevel: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/reorder-levels/${id}`, { method: 'DELETE' }),
+
+  getReorderAlerts: (storeId?: string) => {
+    const params = new URLSearchParams()
+    if (storeId) params.append('storeId', storeId)
+    return apiRequest<any[]>(`/api/pharmacy/reorder-alerts?${params.toString()}`)
+  },
+
+  checkReorderAlerts: (data?: { storeId?: number; medicationId?: number }) =>
+    apiRequest<{ alerts: any[]; count: number }>('/api/pharmacy/reorder-alerts/check', { method: 'POST', body: data || {} }),
+
+  // Dispensing
+  getPaidPrescriptionItemsReadyForDispensing: (patientId?: string) => {
+    const params = new URLSearchParams();
+    if (patientId) params.append('patientId', patientId);
+    return apiRequest<any[]>(`/api/pharmacy/prescriptions/paid/ready-for-dispensing?${params.toString()}`);
+  },
+
+  getPrescriptionItemsReadyForDispensing: (prescriptionId: string) =>
+    apiRequest<any[]>(`/api/pharmacy/prescriptions/${prescriptionId}/items/ready-for-dispensing`),
+
+  getAvailableDrugInventory: (medicationId: string, storeId?: string, scope: 'store' | 'branch' = 'branch') => {
+    const params = new URLSearchParams()
+    if (storeId) params.append('storeId', storeId)
+    if (scope) params.append('scope', scope)
+    const query = params.toString()
+    return apiRequest<any[]>(`/api/pharmacy/drug-inventory/available/${medicationId}${query ? `?${query}` : ''}`)
+  },
+
+  createDispensation: (data: any) =>
+    apiRequest<any>('/api/pharmacy/dispensations', { method: 'POST', body: data }),
+
+  substitutePrescriptionItem: (
+    itemId: string,
+    data: {
+      dispensedMedicationId: number
+      drugInventoryId?: number
+      substitutionType: 'generic' | 'therapeutic' | 'stock_unavailable' | 'other'
+      reason: string
+      notes?: string
+      storeId?: number | null
+    },
+  ) =>
+    apiRequest<any>(`/api/pharmacy/prescription-items/${itemId}/substitute`, { method: 'POST', body: data }),
+
+  getPrescriptionItemSubstitution: (itemId: string) =>
+    apiRequest<any>(`/api/pharmacy/prescription-items/${itemId}/substitution`),
+
+  // External chemists and prescription referrals
+  getExternalChemists: (search?: string, active?: boolean) => {
+    const params = new URLSearchParams()
+    if (search) params.append('search', search)
+    if (active !== undefined) params.append('active', String(active))
+    return apiRequest<any[]>(`/api/pharmacy/external-chemists?${params.toString()}`)
+  },
+
+  getExternalChemist: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/external-chemists/${id}`),
+
+  createExternalChemist: (data: any) =>
+    apiRequest<any>('/api/pharmacy/external-chemists', { method: 'POST', body: data }),
+
+  updateExternalChemist: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/external-chemists/${id}`, { method: 'PUT', body: data }),
+
+  getExternalChemistDrugs: (chemistId: string, filters?: { search?: string; status?: string }) => {
+    const params = new URLSearchParams()
+    if (filters?.search) params.append('search', filters.search)
+    if (filters?.status) params.append('status', filters.status)
+    return apiRequest<any[]>(`/api/pharmacy/external-chemists/${chemistId}/drugs?${params.toString()}`)
+  },
+
+  createExternalChemistDrug: (chemistId: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/external-chemists/${chemistId}/drugs`, { method: 'POST', body: data }),
+
+  updateExternalChemistDrug: (chemistId: string, chemistDrugId: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/external-chemists/${chemistId}/drugs/${chemistDrugId}`, { method: 'PUT', body: data }),
+
+  deleteExternalChemistDrug: (chemistId: string, chemistDrugId: string) =>
+    apiRequest<any>(`/api/pharmacy/external-chemists/${chemistId}/drugs/${chemistDrugId}`, { method: 'DELETE' }),
+
+  getExternalChemistDrugMovements: (chemistId: string, chemistDrugId: string, limit = 100) =>
+    apiRequest<any[]>(
+      `/api/pharmacy/external-chemists/${chemistId}/drugs/${chemistDrugId}/movements?${new URLSearchParams({ limit: String(limit) })}`
+    ),
+
+  getExternalChemistLabs: (chemistId: string, filters?: { search?: string; status?: string }) => {
+    const params = new URLSearchParams()
+    if (filters?.search) params.append('search', filters.search)
+    if (filters?.status) params.append('status', filters.status)
+    return apiRequest<any[]>(`/api/pharmacy/external-chemists/${chemistId}/labs?${params.toString()}`)
+  },
+
+  createExternalChemistLab: (chemistId: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/external-chemists/${chemistId}/labs`, { method: 'POST', body: data }),
+
+  updateExternalChemistLab: (chemistId: string, chemistLabId: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/external-chemists/${chemistId}/labs/${chemistLabId}`, { method: 'PUT', body: data }),
+
+  deleteExternalChemistLab: (chemistId: string, chemistLabId: string) =>
+    apiRequest<any>(`/api/pharmacy/external-chemists/${chemistId}/labs/${chemistLabId}`, { method: 'DELETE' }),
+
+  bulkImportExternalChemistDrugs: (chemistId: string, rows: any[]) =>
+    apiRequest<any>(`/api/pharmacy/external-chemists/${chemistId}/drugs/bulk`, { method: 'POST', body: { rows } }),
+
+  getExternalChemistPriorityDrugs: (chemistId: string, limit = 100) =>
+    apiRequest<any[]>(`/api/pharmacy/external-chemists/${chemistId}/priority-drugs?${new URLSearchParams({ limit: String(limit) })}`),
+
+  getExternalChemistPrescriptionAvailability: (params: { chemistId: string; prescriptionId: string; itemIds?: Array<string | number> }) => {
+    const searchParams = new URLSearchParams()
+    searchParams.append('chemistId', params.chemistId)
+    searchParams.append('prescriptionId', params.prescriptionId)
+    if (params.itemIds?.length) searchParams.append('itemIds', params.itemIds.join(','))
+    return apiRequest<any>(`/api/pharmacy/external-referrals/availability?${searchParams.toString()}`)
+  },
+
+  getExternalChemistLabAvailability: (params: { chemistId: string; labOrderId: string; itemIds?: Array<string | number> }) => {
+    const searchParams = new URLSearchParams()
+    searchParams.append('chemistId', params.chemistId)
+    searchParams.append('labOrderId', params.labOrderId)
+    if (params.itemIds?.length) searchParams.append('itemIds', params.itemIds.join(','))
+    return apiRequest<any>(`/api/pharmacy/external-referrals/lab-availability?${searchParams.toString()}`)
+  },
+
+  getExternalReferrals: (filters?: { status?: string; chemistId?: string; patientId?: string; search?: string; referralType?: string }) => {
+    const params = new URLSearchParams()
+    if (filters?.status) params.append('status', filters.status)
+    if (filters?.chemistId) params.append('chemistId', filters.chemistId)
+    if (filters?.patientId) params.append('patientId', filters.patientId)
+    if (filters?.search) params.append('search', filters.search)
+    if (filters?.referralType) params.append('referralType', filters.referralType)
+    return apiRequest<any[]>(`/api/pharmacy/external-referrals?${params.toString()}`)
+  },
+
+  createExternalReferral: (data: any) =>
+    apiRequest<any>('/api/pharmacy/external-referrals', { method: 'POST', body: data }),
+
+  updateExternalReferralStatus: (id: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/external-referrals/${id}/status`, { method: 'PATCH', body: data }),
+
+  updateExternalReferralItem: (referralId: string, referralItemId: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/external-referrals/${referralId}/items/${referralItemId}`, { method: 'PATCH', body: data }),
+
+  getCurrentChemist: () =>
+    apiRequest<any>('/api/pharmacy/chemist/me'),
+
+  getChemistStockAlerts: (status: string = 'open') =>
+    apiRequest<any[]>(`/api/pharmacy/chemist/alerts?${new URLSearchParams({ status })}`),
+
+  updateChemistStockAlert: (alertId: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/chemist/alerts/${alertId}`, { method: 'PATCH', body: data }),
+
+  getChemistUsers: (filters?: { chemistId?: string }) => {
+    const params = new URLSearchParams()
+    if (filters?.chemistId) params.append('chemistId', filters.chemistId)
+    return apiRequest<any[]>(`/api/pharmacy/chemist/users?${params.toString()}`)
+  },
+
+  createChemistUser: (data: any) =>
+    apiRequest<any>('/api/pharmacy/chemist/users', { method: 'POST', body: data }),
+
+  updateChemistUser: (chemistUserId: string, data: any) =>
+    apiRequest<any>(`/api/pharmacy/chemist/users/${chemistUserId}`, { method: 'PATCH', body: data }),
+
+  // Batch Traceability
+  getBatchTrace: (batchNumber: string) =>
+    apiRequest<any>(`/api/pharmacy/batch-trace/${batchNumber}`),
+
+  getBatchTraceList: (search?: string, medicationId?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (medicationId) params.append('medicationId', medicationId);
+    const query = params.toString();
+    return apiRequest<any[]>(`/api/pharmacy/batch-trace${query ? `?${query}` : ''}`);
+  },
+
+  // Drug Inventory Transaction History
+  getDrugInventoryTransactions: (drugInventoryId: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/${drugInventoryId}/transactions`),
+
+  getDrugInventoryTransactionsByBatch: (batchNumber: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/batch/${batchNumber}/transactions`),
+
+  getMedicationInventoryHistory: (medicationId: string) =>
+    apiRequest<any>(`/api/pharmacy/drug-inventory/medication/${medicationId}/history`),
+
+  // Drug History (New comprehensive history with filters)
+  getDrugHistory: (filters?: {
+    medicationId?: string
+    patientId?: string
+    batchNumber?: string
+    adjustmentType?: string
+    startDate?: string
+    endDate?: string
+    search?: string
+    page?: number
+    limit?: number
+  }) => {
+    const params = new URLSearchParams()
+    if (filters?.medicationId) params.append('medicationId', filters.medicationId)
+    if (filters?.patientId) params.append('patientId', filters.patientId)
+    if (filters?.batchNumber) params.append('batchNumber', filters.batchNumber)
+    if (filters?.adjustmentType) params.append('adjustmentType', filters.adjustmentType)
+    if (filters?.startDate) params.append('startDate', filters.startDate)
+    if (filters?.endDate) params.append('endDate', filters.endDate)
+    if (filters?.search) params.append('search', filters.search)
+    if (filters?.page) params.append('page', filters.page.toString())
+    if (filters?.limit) params.append('limit', filters.limit.toString())
+    return apiRequest<any>(`/api/pharmacy/drug-history?${params.toString()}`)
+  },
+
+  getPatientDrugHistory: (patientId: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams()
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    return apiRequest<any[]>(`/api/pharmacy/drug-history/patient/${patientId}?${params.toString()}`)
+  },
+
+  /** Patients who received a given drug (dispensation records). */
+  getPatientsByDrug: (filters: {
+    medicationId?: string
+    drugSearch?: string
+    patientSearch?: string
+    storeId?: string
+    startDate?: string
+    endDate?: string
+    page?: number
+    limit?: number
+    includeEvents?: boolean
+  }) => {
+    const params = new URLSearchParams()
+    if (filters.medicationId) params.append('medicationId', filters.medicationId)
+    if (filters.drugSearch) params.append('drugSearch', filters.drugSearch)
+    if (filters.patientSearch) params.append('patientSearch', filters.patientSearch)
+    if (filters.storeId) params.append('storeId', filters.storeId)
+    if (filters.startDate) params.append('startDate', filters.startDate)
+    if (filters.endDate) params.append('endDate', filters.endDate)
+    if (filters.page) params.append('page', String(filters.page))
+    if (filters.limit) params.append('limit', String(filters.limit))
+    if (filters.includeEvents) params.append('includeEvents', '1')
+    return apiRequest<{
+      medication: any | null
+      patients: any[]
+      summary: { patientCount: number; dispensationCount: number; totalQuantity: number }
+      pagination: { page: number; limit: number; total: number; totalPages: number }
+    }>(`/api/pharmacy/patients-by-drug?${params.toString()}`)
+  },
+
+  /** Snapshot of stock, alerts, today's activity for a store. */
+  getStoreOverview: (filters: { storeId?: string; branchId?: string }) => {
+    const params = new URLSearchParams()
+    if (filters.storeId) params.append('storeId', filters.storeId)
+    if (filters.branchId) params.append('branchId', filters.branchId)
+    return apiRequest<any>(`/api/pharmacy/store-overview?${params.toString()}`)
+  },
+
+  // Stock Adjustments
+  createStockAdjustment: (data: any) =>
+    apiRequest<any>('/api/pharmacy/stock-adjustments', { method: 'POST', body: data }),
+
+  // Nurse Pickups (for admitted patients)
+  getPrescriptionsReadyForPickup: (admissionId?: string, patientId?: string) => {
+    const params = new URLSearchParams();
+    if (admissionId) params.append('admissionId', admissionId);
+    if (patientId) params.append('patientId', patientId);
+    return apiRequest<any[]>(`/api/pharmacy/nurse-pickups/ready?${params.toString()}`);
+  },
+
+  createNursePickup: (data: { pickups: Array<{ prescriptionId: string, items: Array<{ prescriptionItemId: string, dispensationId?: string, quantityPickedUp: number, notes?: string }>, notes?: string, admissionId?: string }> }) =>
+    apiRequest<any>('/api/pharmacy/nurse-pickups', { method: 'POST', body: data }),
+
+  getNursePickups: (params?: { nurseId?: string, patientId?: string, admissionId?: string, startDate?: string, endDate?: string, status?: string, page?: number, limit?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          searchParams.append(key, value.toString());
+        }
+      });
+    }
+    return apiRequest<{ pickups: any[], pagination: any }>(`/api/pharmacy/nurse-pickups?${searchParams.toString()}`);
+  },
+
+  getNursePickup: (id: string) =>
+    apiRequest<any>(`/api/pharmacy/nurse-pickups/${id}`),
+
+  /** Mark a pending nurse pickup as ready for pickup (pharmacy has dispensed). Removes from Pending, appears in History. */
+  markNursePickupReadyForPickup: (pickupId: string) =>
+    apiRequest<{ message: string; pickupId: string; status: string }>(
+      `/api/pharmacy/nurse-pickups/${pickupId}`,
+      { method: 'PATCH', body: { status: 'ready_for_pickup' } }
+    ),
+
+  /** Cancel a nurse pickup (pharmacist only). If status was picked_up, quantities are returned to inventory. */
+  cancelNursePickup: (pickupId: string) =>
+    apiRequest<{ message: string; pickupId: string; status: string }>(
+      `/api/pharmacy/nurse-pickups/${pickupId}`,
+      { method: 'PATCH', body: { status: 'cancelled' } }
+    ),
+};
+
+// Notification API
+export const notificationApi = {
+  getDrugNotifications: (status?: string, priority?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status && status !== 'all') params.append('status', status);
+    if (priority && priority !== 'all') params.append('priority', priority);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/notifications/drug-notifications?${params.toString()}`);
+  },
+
+  getDrugNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/drug-notifications/${id}`),
+
+  acknowledgeDrugNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/drug-notifications/${id}/acknowledge`, { method: 'PUT' }),
+
+  resolveDrugNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/drug-notifications/${id}/resolve`, { method: 'PUT' }),
+
+  deleteDrugNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/drug-notifications/${id}`, { method: 'DELETE' }),
+
+  getPharmacyNotifications: (filters?: { status?: string; notificationType?: string; limit?: number }) => {
+    const params = new URLSearchParams()
+    if (filters?.status) params.append('status', filters.status)
+    if (filters?.notificationType) params.append('notificationType', filters.notificationType)
+    if (filters?.limit) params.append('limit', String(filters.limit))
+    return apiRequest<any[]>(`/api/notifications/pharmacy-notifications?${params.toString()}`)
+  },
+
+  acknowledgePharmacyNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/pharmacy-notifications/${id}/acknowledge`, { method: 'PUT' }),
+
+  getStaffNotifications: (filters?: { status?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.limit) params.append('limit', String(filters.limit));
+    return apiRequest<any[]>(`/api/notifications/staff?${params.toString()}`);
+  },
+
+  acknowledgeStaffNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/staff/${id}/acknowledge`, { method: 'PUT' }),
+
+  resolvePharmacyNotification: (id: string) =>
+    apiRequest<any>(`/api/notifications/pharmacy-notifications/${id}/resolve`, { method: 'PUT' }),
+};
+
+// Laboratory API
+export const laboratoryApi = {
+  getTestTypes: (search?: string, category?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/laboratory/test-types?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(category && { category }) })}`),
+
+  getTestTypeById: (id: string) =>
+    apiRequest<any>(`/api/laboratory/test-types/${id}`),
+
+  createTestType: (data: any) =>
+    apiRequest<any>('/api/laboratory/test-types', { method: 'POST', body: data }),
+
+  updateTestType: (id: string, data: any) =>
+    apiRequest<any>(`/api/laboratory/test-types/${id}`, { method: 'PUT', body: data }),
+
+  deleteTestType: (id: string) =>
+    apiRequest<any>(`/api/laboratory/test-types/${id}`, { method: 'DELETE' }),
+
+  getOrders: (patientId?: string, status?: string, page = 1, limit = 50, branchId?: string, labId?: string) =>
+    apiRequest<any[]>(`/api/laboratory/orders?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(patientId && { patientId }), ...(status && { status }), ...(branchId && { branchId }), ...(labId && { labId }) })}`),
+
+  getLaboratories: (branchId?: string, search?: string, isActive?: string) => {
+    const params = new URLSearchParams()
+    if (branchId) params.append('branchId', branchId)
+    if (search) params.append('search', search)
+    if (isActive) params.append('isActive', isActive)
+    return apiRequest<any[]>(`/api/laboratory/laboratories?${params.toString()}`)
+  },
+
+  getLaboratory: (id: string) =>
+    apiRequest<any>(`/api/laboratory/laboratories/${id}`),
+
+  createLaboratory: (data: any) =>
+    apiRequest<any>('/api/laboratory/laboratories', { method: 'POST', body: data }),
+
+  updateLaboratory: (id: string, data: any) =>
+    apiRequest<any>(`/api/laboratory/laboratories/${id}`, { method: 'PUT', body: data }),
+
+  deleteLaboratory: (id: string) =>
+    apiRequest<any>(`/api/laboratory/laboratories/${id}`, { method: 'DELETE' }),
+
+  getLabOfferings: (labId: string) =>
+    apiRequest<{ laboratory: any; offerings: any[] }>(`/api/laboratory/laboratories/${labId}/offerings`),
+
+  updateLabOfferings: (labId: string, testTypeIds: number[]) =>
+    apiRequest<{ labId: number; offerings: any[] }>(`/api/laboratory/laboratories/${labId}/offerings`, {
+      method: 'PUT',
+      body: { testTypeIds },
+    }),
+
+  getLabsForTests: (testTypeIds: Array<number | string>, branchId?: string) => {
+    const params = new URLSearchParams()
+    params.append('testTypeIds', testTypeIds.map(String).join(','))
+    if (branchId) params.append('branchId', branchId)
+    return apiRequest<{
+      branchId: number
+      testTypeIds: number[]
+      matchMode: string
+      preferredLabId: number | null
+      labs: Array<{
+        labId: number
+        labCode: string
+        labName: string
+        branchId: number
+        branchName?: string
+        isDefault?: boolean
+        location?: string
+        contactPerson?: string
+        phone?: string
+        email?: string
+        notes?: string
+        offeredCount?: number
+        openOrderCount?: number
+        waitingCount?: number
+        facilityLabQueueWaiting?: number
+        isPreferred?: boolean
+      }>
+    }>(`/api/laboratory/labs-for-tests?${params.toString()}`)
+  },
+
+  getOrder: (id: string) =>
+    apiRequest<any>(`/api/laboratory/orders/${id}`),
+
+  createOrder: (data: any) =>
+    apiRequest<any>('/api/laboratory/orders', { method: 'POST', body: data }),
+
+  updateOrder: (id: string, data: any) =>
+    apiRequest<any>(`/api/laboratory/orders/${id}`, { method: 'PUT', body: data }),
+
+  rescheduleOrder: (id: string, data: { sampleCollectionDate?: string; expectedCompletionDate?: string; reason?: string }) =>
+    apiRequest<any>(`/api/laboratory/orders/${id}/reschedule`, { method: 'POST', body: data }),
+
+  referOrder: (id: string, data: { labId: number; reason?: string }) =>
+    apiRequest<any>(`/api/laboratory/orders/${id}/refer`, { method: 'POST', body: data }),
+
+  getOrderClinicalContext: (id: string) =>
+    apiRequest<{
+      order: any
+      allergies: any[]
+      prescriptions: any[]
+      medicalHistory: any[]
+    }>(`/api/laboratory/orders/${id}/clinical-context`),
+
+  // Results API
+  getOrderResults: (orderId: string) =>
+    apiRequest<any[]>(`/api/laboratory/orders/${orderId}/results`),
+
+  createResult: (orderId: string, data: any) =>
+    apiRequest<any>(`/api/laboratory/orders/${orderId}/results`, { method: 'POST', body: data }),
+
+  updateResult: (resultId: string, data: any) =>
+    apiRequest<any>(`/api/laboratory/results/${resultId}`, { method: 'PUT', body: data }),
+
+  // Critical Results API
+  getCriticalResults: () =>
+    apiRequest<any[]>(`/api/laboratory/critical-results`),
+
+  getPatientCriticalResults: (patientId: string) =>
+    apiRequest<any[]>(`/api/laboratory/critical-results/${patientId}`),
+
+  // Critical Tests Management API (deprecated - use critical value ranges instead)
+  getCriticalTests: () =>
+    apiRequest<any[]>(`/api/laboratory/critical-tests`),
+
+  addCriticalTest: (data: { testTypeId: number, description?: string }) =>
+    apiRequest<any>(`/api/laboratory/critical-tests`, { method: 'POST', body: data }),
+
+  removeCriticalTest: (id: string) =>
+    apiRequest<any>(`/api/laboratory/critical-tests/${id}`, { method: 'DELETE' }),
+
+  // Critical Value Ranges API
+  getCriticalValueRanges: () =>
+    apiRequest<any[]>(`/api/laboratory/critical-value-ranges`),
+
+  createCriticalValueRange: (data: { testTypeId: number, parameterName: string, unit?: string, criticalLowValue?: number, criticalHighValue?: number, description?: string }) =>
+    apiRequest<any>(`/api/laboratory/critical-value-ranges`, { method: 'POST', body: data }),
+
+  updateCriticalValueRange: (id: string, data: { parameterName?: string, unit?: string, criticalLowValue?: number, criticalHighValue?: number, description?: string, isActive?: boolean }) =>
+    apiRequest<any>(`/api/laboratory/critical-value-ranges/${id}`, { method: 'PUT', body: data }),
+
+  deleteCriticalValueRange: (id: string) =>
+    apiRequest<any>(`/api/laboratory/critical-value-ranges/${id}`, { method: 'DELETE' }),
+};
+
+// Inpatient API
+export const inpatientApi = {
+  getAdmissions: (status?: string, wardId?: string, page = 1, limit = 50, search?: string, patientId?: string) =>
+    apiRequest<any[]>(`/api/inpatient/admissions?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }), ...(wardId && { wardId }), ...(search && { search }), ...(patientId && { patientId }) })}`),
+
+  getAdmission: (id: string) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}`),
+
+  createAdmission: (data: any) =>
+    apiRequest<any>('/api/inpatient/admissions', { method: 'POST', body: data }),
+
+  updateAdmission: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}`, { method: 'PUT', body: data }),
+
+  deleteAdmission: (id: string) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}`, { method: 'DELETE' }),
+
+  getBeds: (wardId?: string, status?: string, page = 1, limit = 100) =>
+    apiRequest<any[]>(`/api/inpatient/beds?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(wardId && { wardId }), ...(status && { status }) })}`),
+
+  getBed: (id: string) =>
+    apiRequest<any>(`/api/inpatient/beds/${id}`),
+
+  createBed: (data: any) =>
+    apiRequest<any>('/api/inpatient/beds', { method: 'POST', body: data }),
+
+  updateBed: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/beds/${id}`, { method: 'PUT', body: data }),
+
+  deleteBed: (id: string) =>
+    apiRequest<any>(`/api/inpatient/beds/${id}`, { method: 'DELETE' }),
+
+  getWards: (wardType?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/inpatient/wards?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(wardType && { wardType }) })}`),
+
+  getWard: (id: string) =>
+    apiRequest<any>(`/api/inpatient/wards/${id}`),
+
+  createWard: (data: any) =>
+    apiRequest<any>('/api/inpatient/wards', { method: 'POST', body: data }),
+
+  updateWard: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/wards/${id}`, { method: 'PUT', body: data }),
+
+  deleteWard: (id: string) =>
+    apiRequest<any>(`/api/inpatient/wards/${id}`, { method: 'DELETE' }),
+
+  // Inpatient Management
+  getAdmissionOverview: (id: string) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/overview`),
+
+  getAdmissionBill: (id: string) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/bill`),
+
+  getAdmissionBillAdjustments: (id: string) =>
+    apiRequest<any[]>(`/api/inpatient/admissions/${id}/bill-adjustments`),
+
+  createAdmissionBillAdjustment: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/bill-adjustments`, { method: 'POST', body: data }),
+
+  updateAdmissionBillAdjustment: (id: string, adjustmentId: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/bill-adjustments/${adjustmentId}`, { method: 'PUT', body: data }),
+
+  getDoctorReviews: (id: string) =>
+    apiRequest<any[]>(`/api/inpatient/admissions/${id}/reviews`),
+
+  createDoctorReview: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/reviews`, { method: 'POST', body: data }),
+
+  updateDoctorReview: (reviewId: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/reviews/${reviewId}`, { method: 'PUT', body: data }),
+
+  getNursingCare: (id: string) =>
+    apiRequest<any[]>(`/api/inpatient/admissions/${id}/nursing-care`),
+
+  createNursingCare: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/nursing-care`, { method: 'POST', body: data }),
+
+  updateNursingCare: (careId: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/nursing-care/${careId}`, { method: 'PUT', body: data }),
+
+  getVitalsSchedule: (id: string) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/vitals-schedule`),
+
+  createVitalsSchedule: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/vitals-schedule`, { method: 'POST', body: data }),
+
+  recordVitals: (id: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/admissions/${id}/vitals`, { method: 'POST', body: data }),
+
+  updateVitals: (vitalId: string, data: any) =>
+    apiRequest<any>(`/api/inpatient/vitals/${vitalId}`, { method: 'PUT', body: data }),
+
+  deleteVitals: (vitalId: string) =>
+    apiRequest<any>(`/api/inpatient/vitals/${vitalId}`, { method: 'DELETE' }),
+};
+
+// Maternity API
+export const maternityApi = {
+  getAdmissions: (status?: string, page = 1, limit = 50, search?: string) =>
+    apiRequest<any[]>(`/api/maternity/admissions?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }), ...(search && { search }) })}`),
+
+  getAdmission: (id: string) =>
+    apiRequest<any>(`/api/maternity/admissions/${id}`),
+
+  createAdmission: (data: any) =>
+    apiRequest<any>('/api/maternity/admissions', { method: 'POST', body: data }),
+
+  updateAdmission: (id: string, data: any) =>
+    apiRequest<any>(`/api/maternity/admissions/${id}`, { method: 'PUT', body: data }),
+
+  deleteAdmission: (id: string) =>
+    apiRequest<any>(`/api/maternity/admissions/${id}`, { method: 'DELETE' }),
+
+  getDeliveries: (page = 1, limit = 50, search?: string, deliveryType?: string) =>
+    apiRequest<any[]>(`/api/maternity/deliveries?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(deliveryType && { deliveryType }) })}`),
+
+  getDelivery: (id: string) =>
+    apiRequest<any>(`/api/maternity/deliveries/${id}`),
+
+  createDelivery: (data: any) =>
+    apiRequest<any>('/api/maternity/deliveries', { method: 'POST', body: data }),
+
+  updateDelivery: (id: string, data: any) =>
+    apiRequest<any>(`/api/maternity/deliveries/${id}`, { method: 'PUT', body: data }),
+};
+
+// ICU API
+export const icuApi = {
+  getAdmissions: (status?: string, page = 1, limit = 50, search?: string) =>
+    apiRequest<any[]>(`/api/icu/admissions?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }), ...(search && { search }) })}`),
+
+  getAdmission: (id: string) =>
+    apiRequest<any>(`/api/icu/admissions/${id}`),
+
+  getAdmissionOverview: (id: string) =>
+    apiRequest<any>(`/api/icu/admissions/${id}/overview`),
+
+  createAdmission: (data: any) =>
+    apiRequest<any>('/api/icu/admissions', { method: 'POST', body: data }),
+
+  updateAdmission: (id: string, data: any) =>
+    apiRequest<any>(`/api/icu/admissions/${id}`, { method: 'PUT', body: data }),
+
+  deleteAdmission: (id: string) =>
+    apiRequest<any>(`/api/icu/admissions/${id}`, { method: 'DELETE' }),
+
+  getMonitoring: (id: string) =>
+    apiRequest<any[]>(`/api/icu/admissions/${id}/monitoring`),
+
+  createMonitoring: (id: string, data: any) =>
+    apiRequest<any>(`/api/icu/admissions/${id}/monitoring`, { method: 'POST', body: data }),
+
+  updateMonitoring: (id: string, monitoringId: string, data: any) =>
+    apiRequest<any>(`/api/icu/admissions/${id}/monitoring/${monitoringId}`, { method: 'PUT', body: data }),
+
+  deleteMonitoring: (id: string, monitoringId: string) =>
+    apiRequest<any>(`/api/icu/admissions/${id}/monitoring/${monitoringId}`, { method: 'DELETE' }),
+
+  getBeds: (status?: string, page = 1, limit = 100) =>
+    apiRequest<any[]>(`/api/icu/beds?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }) })}`),
+
+  getBed: (id: string) =>
+    apiRequest<any>(`/api/icu/beds/${id}`),
+
+  createBed: (data: any) =>
+    apiRequest<any>('/api/icu/beds', { method: 'POST', body: data }),
+
+  updateBed: (id: string, data: any) =>
+    apiRequest<any>(`/api/icu/beds/${id}`, { method: 'PUT', body: data }),
+
+  deleteBed: (id: string) =>
+    apiRequest<any>(`/api/icu/beds/${id}`, { method: 'DELETE' }),
+
+  getEquipment: (status?: string, page = 1, limit = 100) =>
+    apiRequest<any[]>(`/api/icu/equipment?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }) })}`),
+
+  getEquipmentById: (id: string) =>
+    apiRequest<any>(`/api/icu/equipment/${id}`),
+
+  createEquipment: (data: any) =>
+    apiRequest<any>('/api/icu/equipment', { method: 'POST', body: data }),
+
+  updateEquipment: (id: string, data: any) =>
+    apiRequest<any>(`/api/icu/equipment/${id}`, { method: 'PUT', body: data }),
+
+  deleteEquipment: (id: string) =>
+    apiRequest<any>(`/api/icu/equipment/${id}`, { method: 'DELETE' }),
+};
+
+// Radiology API
+export const radiologyApi = {
+  getExamTypes: (search?: string, category?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/radiology/exam-types?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(category && { category }) })}`),
+
+  getExamTypeById: (id: string) =>
+    apiRequest<any>(`/api/radiology/exam-types/${id}`),
+
+  createExamType: (data: any) =>
+    apiRequest<any>('/api/radiology/exam-types', { method: 'POST', body: data }),
+
+  updateExamType: (id: string, data: any) =>
+    apiRequest<any>(`/api/radiology/exam-types/${id}`, { method: 'PUT', body: data }),
+
+  deleteExamType: (id: string) =>
+    apiRequest<any>(`/api/radiology/exam-types/${id}`, { method: 'DELETE' }),
+
+  getOrders: (patientId?: string, status?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/radiology/orders?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(patientId && { patientId }), ...(status && { status }) })}`),
+
+  getOrder: (id: string) =>
+    apiRequest<any>(`/api/radiology/orders/${id}`),
+
+  createOrder: (data: any) =>
+    apiRequest<any>('/api/radiology/orders', { method: 'POST', body: data }),
+
+  updateOrder: (id: string, data: any) =>
+    apiRequest<any>(`/api/radiology/orders/${id}`, { method: 'PUT', body: data }),
+
+  /** Persist exam + report rows and mark order completed */
+  completeOrderReport: (orderId: string, data: {
+    findings?: string;
+    impression?: string;
+    recommendations?: string;
+    examDate?: string;
+    technicianId?: number;
+    performedBy?: number;
+    reportedBy: number;
+    queueId?: number;
+  }) =>
+    apiRequest<any>(`/api/radiology/orders/${orderId}/complete-report`, { method: 'POST', body: data }),
+
+  /** Stored reports (radiology_reports + joins) */
+  getReports: (params?: {
+    patientId?: string;
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    page?: number;
+    limit?: number;
+  }) => {
+    const p = new URLSearchParams();
+    if (params?.patientId) p.append('patientId', params.patientId);
+    if (params?.search) p.append('search', params.search);
+    if (params?.dateFrom) p.append('dateFrom', params.dateFrom);
+    if (params?.dateTo) p.append('dateTo', params.dateTo);
+    if (params?.page) p.append('page', String(params.page));
+    if (params?.limit) p.append('limit', String(params.limit));
+    const q = p.toString();
+    return apiRequest<any[]>(`/api/radiology/reports${q ? `?${q}` : ''}`);
+  },
+};
+
+// Triage API
+export const triageApi = {
+  getAll: (priority?: string, status?: string, search?: string, page = 1, limit = 50, patientId?: string) =>
+    apiRequest<any[]>(`/api/triage?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(priority && { priority }), ...(status && { status }), ...(search && { search }), ...(patientId && { patientId }) })}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/triage/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/triage', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/triage/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/triage/${id}`, { method: 'DELETE' }),
+
+  updateOrder: (id: string, data: any) =>
+    apiRequest<any>(`/api/radiology/orders/${id}`, { method: 'PUT', body: data }),
+
+  // Critical Vital Ranges API
+  getCriticalVitalRanges: () =>
+    apiRequest<any[]>(`/api/triage/critical-vital-ranges`),
+
+  createCriticalVitalRange: (data: { vitalParameter: string, unit?: string, criticalLowValue?: number, criticalHighValue?: number, description?: string }) =>
+    apiRequest<any>(`/api/triage/critical-vital-ranges`, { method: 'POST', body: data }),
+
+  updateCriticalVitalRange: (id: string, data: { vitalParameter?: string, unit?: string, criticalLowValue?: number, criticalHighValue?: number, description?: string, isActive?: boolean }) =>
+    apiRequest<any>(`/api/triage/critical-vital-ranges/${id}`, { method: 'PUT', body: data }),
+
+  deleteCriticalVitalRange: (id: string) =>
+    apiRequest<any>(`/api/triage/critical-vital-ranges/${id}`, { method: 'DELETE' }),
+};
+
+// Medical Records API
+export const medicalRecordsApi = {
+  getAll: (search?: string, patientId?: string, doctorId?: string, visitType?: string, department?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/medical-records?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(patientId && { patientId }), ...(doctorId && { doctorId }), ...(visitType && { visitType }), ...(department && { department }) })}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/medical-records/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/medical-records', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/medical-records/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/medical-records/${id}`, { method: 'DELETE' }),
+
+  getAmendments: (id: string) =>
+    apiRequest<{ recordId: string; amendments: any[] }>(`/api/medical-records/${id}/amendments`),
+};
+
+export const alliedHealthOrdersApi = {
+  list: (patientId: string) =>
+    apiRequest<any[]>(
+      `/api/clinical-service-orders?${new URLSearchParams({ patientId })}`
+    ),
+
+  create: (data: Record<string, unknown>) =>
+    apiRequest<any>('/api/clinical-service-orders', { method: 'POST', body: data }),
+
+  update: (orderId: number, data: Record<string, unknown>) =>
+    apiRequest<any>(`/api/clinical-service-orders/${orderId}`, { method: 'PUT', body: data }),
+};
+
+export const mchApi = {
+  listAncVisits: (patientId: string) =>
+    apiRequest<any[]>(`/api/mch/patients/${patientId}/anc-visits`),
+
+  createAncVisit: (patientId: string, data: Record<string, unknown>) =>
+    apiRequest<any>(`/api/mch/patients/${patientId}/anc-visits`, { method: 'POST', body: data }),
+  listDeliveries: (patientId: string) =>
+    apiRequest<any[]>(`/api/mch/patients/${patientId}/deliveries`),
+  listPncVisits: (patientId: string) =>
+    apiRequest<any[]>(`/api/mch/patients/${patientId}/pnc-visits`),
+  createPncVisit: (patientId: string, data: Record<string, unknown>) =>
+    apiRequest<any>(`/api/mch/patients/${patientId}/pnc-visits`, { method: 'POST', body: data }),
+};
+
+// Inventory API
+export const inventoryApi = {
+  getAll: (category?: string, status?: string, search?: string, lowStock?: boolean) => {
+    const params = new URLSearchParams();
+    if (category) params.append('category', category);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    if (lowStock) params.append('lowStock', 'true');
+    const query = params.toString();
+    return apiRequest<any[]>(`/api/inventory${query ? `?${query}` : ''}`);
+  },
+
+  getSummary: () =>
+    apiRequest<any>('/api/inventory/summary'),
+
+  getAnalytics: (timeRange?: string) =>
+    apiRequest<any>(`/api/inventory/analytics${timeRange ? `?timeRange=${timeRange}` : ''}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/inventory/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/inventory', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/inventory/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/inventory/${id}`, { method: 'DELETE' }),
+};
+
+// Inventory Transactions API
+export const inventoryTransactionApi = {
+  getAll: (itemId?: string, transactionType?: string, startDate?: string, endDate?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+    if (itemId) params.append('itemId', itemId);
+    if (transactionType) params.append('transactionType', transactionType);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/inventory/transactions?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/inventory/transactions/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/inventory/transactions', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/inventory/transactions/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/inventory/transactions/${id}`, { method: 'DELETE' }),
+};
+
+// Clinical Services API
+export const clinicalServicesApi = {
+  getAll: (search?: string, category?: string) =>
+    apiRequest<any[]>(`/api/clinical-services?${new URLSearchParams({ ...(search && { search }), ...(category && { category }) })}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/clinical-services/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/clinical-services', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/clinical-services/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/clinical-services/${id}`, { method: 'DELETE' }),
+};
+
+// Doctors API
+export const doctorsApi = {
+  getAll: (search?: string) =>
+    apiRequest<any[]>(`/api/doctors?${new URLSearchParams(search ? { search } : {})}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/doctors/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/doctors', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/doctors/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/doctors/${id}`, { method: 'DELETE' }),
+};
+
+// Appointments API
+export const appointmentsApi = {
+  getAll: (
+    date?: string,
+    status?: string,
+    doctorId?: string,
+    patientId?: string,
+    page = 1,
+    limit = 50,
+    branchId?: string | number,
+    options?: { forDoctorId?: string | number; department?: string }
+  ) =>
+    apiRequest<any[]>(`/api/appointments?${new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+      ...(date && { date }),
+      ...(status && { status }),
+      ...(doctorId && { doctorId }),
+      ...(patientId && { patientId }),
+      ...(branchId != null && branchId !== '' ? { branchId: String(branchId) } : {}),
+      ...(options?.forDoctorId != null && options.forDoctorId !== ''
+        ? { forDoctorId: String(options.forDoctorId) }
+        : {}),
+      ...(options?.department ? { department: options.department } : {}),
+    })}`),
+
+  getDoctorInbox: (params: {
+    forDoctorId: string | number
+    date?: string
+    branchId?: string | number
+    status?: string
+    limit?: number
+  }) =>
+    apiRequest<any[]>(`/api/appointments?${new URLSearchParams({
+      page: '1',
+      limit: String(params.limit ?? 200),
+      forDoctorId: String(params.forDoctorId),
+      ...(params.date ? { date: params.date } : {}),
+      ...(params.branchId != null && params.branchId !== '' ? { branchId: String(params.branchId) } : {}),
+      ...(params.status ? { status: params.status } : {}),
+    })}`),
+
+  getCalendar: (from: string, to: string) =>
+    apiRequest<any>(`/api/appointments/calendar?${new URLSearchParams({ from, to })}`),
+
+  getLimit: (branchId: number | string, date: string) =>
+    apiRequest<any>(`/api/appointments/limits?${new URLSearchParams({ branchId: String(branchId), date })}`),
+
+  setLimit: (data: { branchId: number | string; maxAppointments: number; date?: string | null }) =>
+    apiRequest<{ ok: boolean; limit: any }>("/api/appointments/limits", {
+      method: "PUT",
+      body: data,
+    }),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/appointments/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/appointments', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/appointments/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/appointments/${id}`, { method: 'DELETE' }),
+};
+
+/** 409 from appointment create/update when same patient+service+date/time already exists. */
+export function isDuplicateAppointmentConflict(error: any): boolean {
+  return (
+    error?.status === 409 &&
+    (error?.code === 'DUPLICATE_APPOINTMENT' ||
+      error?.response?.code === 'DUPLICATE_APPOINTMENT')
+  );
+}
+
+/** Unauthenticated create + staff inbox for /hmis/book */
+export const publicBookingsApi = {
+  create: (data: Record<string, unknown>) =>
+    apiRequest<any>('/api/public/appointments', { method: 'POST', body: data, timeoutMs: 25000 }),
+
+  lookup: (code: string) =>
+    apiRequest<any>(`/api/public/appointments/lookup/${encodeURIComponent(code)}`, { timeoutMs: 10000 }),
+
+  list: (status?: string) =>
+    apiRequest<any[]>(
+      `/api/public/appointments${status ? `?${new URLSearchParams({ status })}` : ''}`
+    ),
+
+  accept: (id: string | number, data?: { patientId?: number | null }) =>
+    apiRequest<any>(`/api/public/appointments/${id}/accept`, { method: 'POST', body: data || {} }),
+
+  decline: (id: string | number) =>
+    apiRequest<any>(`/api/public/appointments/${id}/decline`, { method: 'POST' }),
+
+  resendSms: (id: string | number) =>
+    apiRequest<any>(`/api/public/appointments/${id}/resend-sms`, { method: 'POST', timeoutMs: 25000 }),
+
+  reschedule: (
+    id: string | number,
+    data: { preferredDate: string; preferredTime: string; reason?: string }
+  ) =>
+    apiRequest<any>(`/api/public/appointments/${id}/reschedule`, {
+      method: 'POST',
+      body: data,
+      timeoutMs: 25000,
+    }),
+};
+
+// Telemedicine API (Zoom link mode + optional Meeting SDK embed via server-signed JWT)
+export const telemedicineApi = {
+  /** Per-user defaults (PMI link, passcode); copied into new sessions when no URL is sent */
+  getMyDefaults: () => apiRequest<any>('/api/telemedicine/my-defaults'),
+
+  updateMyDefaults: (data: { defaultZoomJoinUrl?: string | null; defaultZoomPassword?: string | null }) =>
+    apiRequest<any>('/api/telemedicine/my-defaults', { method: 'PUT', body: data }),
+
+  getAnalytics: (
+    period: 'daily' | 'weekly' | 'monthly' | 'custom' = 'monthly',
+    options?: {
+      scope?: 'branch' | 'network'
+      from?: string
+      to?: string
+      facilityIds?: number[]
+      includeNotStarted?: boolean
+      gender?: 'all' | 'Male' | 'Female' | 'Other'
+      provider?: string
+    }
+  ) => {
+    const q = new URLSearchParams({ period })
+    if (options?.scope) q.set('scope', options.scope)
+    if (options?.from) q.set('from', options.from)
+    if (options?.to) q.set('to', options.to)
+    if (options?.facilityIds?.length) q.set('facilityIds', options.facilityIds.join(','))
+    if (options?.includeNotStarted) q.set('includeNotStarted', '1')
+    if (options?.gender && options.gender !== 'all') q.set('gender', options.gender)
+    if (options?.provider) q.set('provider', options.provider)
+    return apiRequest<any>(`/api/telemedicine/analytics?${q}`)
+  },
+
+  listQueue: () =>
+    apiRequest<any[]>('/api/telemedicine/queue'),
+
+  /**
+   * Paginated list. Default: doctors see own sessions; admins see all.
+   * `scope: 'facility'` — nurses/doctors/admins see facility-wide list (for boards / handoff).
+   * `statusGroup` filters by session lifecycle.
+   */
+  listSessions: (params?: {
+    page?: number
+    limit?: number
+    scope?: 'facility'
+    statusGroup?: 'active' | 'pending' | 'in_progress' | 'ended'
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.page != null) q.set('page', String(params.page));
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    if (params?.scope) q.set('scope', params.scope);
+    if (params?.statusGroup) q.set('statusGroup', params.statusGroup);
+    const qs = q.toString();
+    return apiRequest<{ sessions: any[]; page: number; limit: number; total: number }>(
+      `/api/telemedicine/sessions${qs ? `?${qs}` : ''}`
+    );
+  },
+
+  /**
+   * Creates a telemedicine session, or returns an existing active one for the same patient
+   * (`reusedExistingSession: true`). Optional `forceNew: true` skips reuse (advanced).
+   */
+  createSession: (data: any) =>
+    apiRequest<any>('/api/telemedicine/sessions', {
+      method: 'POST',
+      body: data,
+      /** Longer than most routes — create waits on DB pool + transaction */
+      timeoutMs: 60000,
+    }),
+
+  getSession: (sessionId: string) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}`),
+
+  /** Save or update pasted meeting link, optional password, and provider */
+  updateSessionLink: (sessionId: string, data: { zoomJoinUrl?: string | null; zoomPassword?: string | null; provider?: string; videoProvider?: string }) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/link`, {
+      method: 'PATCH',
+      body: data,
+    }),
+
+  recordConsent: (sessionId: string, data: any) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/consent`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  startSession: (sessionId: string) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/start`, { method: 'POST' }),
+
+  endSession: (sessionId: string) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/end`, { method: 'POST' }),
+
+  /** Returns { joinUrl, zoomPassword } from stored session (doctor/admin only) */
+  getDoctorJoinUrl: (sessionId: string) =>
+    apiRequest<any>(`/api/telemedicine/sessions/${sessionId}/join-url?${new URLSearchParams({
+      participant: 'doctor',
+    })}`),
+
+  /** True when API has ZOOM_MEETING_SDK_KEY + ZOOM_MEETING_SDK_SECRET (embedded Component View). */
+  getZoomMeetingSdkStatus: () =>
+    apiRequest<{ configured: boolean }>('/api/telemedicine/zoom-meeting-sdk-status'),
+
+  getDailyStatus: () =>
+    apiRequest<{ configured: boolean }>('/api/telemedicine/daily-status'),
+
+  /** Create a Daily room for this session if zoomJoinUrl is empty. */
+  ensureDailyRoom: (sessionId: string) =>
+    apiRequest<{ sessionId: number; provider: string; zoomJoinUrl: string; created: boolean }>(
+      `/api/telemedicine/sessions/${sessionId}/ensure-daily-room`,
+      { method: 'POST', timeoutMs: 30000 }
+    ),
+
+  /** Server-generated Meeting SDK JWT for ZoomMtgEmbedded.join — never sign in the browser. */
+  getZoomSdkSignature: (sessionId: string, body?: { role?: 0 | 1 }) =>
+    apiRequest<{ signature: string; meetingNumber: string; password: string; sdkKey?: string }>(
+      `/api/telemedicine/sessions/${sessionId}/zoom-sdk-signature`,
+      { method: 'POST', body: body ?? {} }
+    ),
+};
+
+// Workflow API
+export const workflowApi = {
+  // After triage, create cashier queue for consultation fees
+  triageToCashier: (data: any) =>
+    apiRequest<any>('/api/workflow/triage-to-cashier', { method: 'POST', body: data }),
+
+  // After payment, create consultation queue
+  cashierToConsultation: (data: any) =>
+    apiRequest<any>('/api/workflow/cashier-to-consultation', { method: 'POST', body: data }),
+
+  // After consultation, send to lab
+  consultationToLab: (data: any) =>
+    apiRequest<any>('/api/workflow/consultation-to-lab', { method: 'POST', body: data }),
+
+  // After prescription, create cashier queue for drug payment
+  prescriptionToCashier: (data: any) =>
+    apiRequest<any>('/api/workflow/prescription-to-cashier', { method: 'POST', body: data }),
+
+  // After drug payment, create pharmacy queue
+  cashierToPharmacy: (data: any) =>
+    apiRequest<any>('/api/workflow/cashier-to-pharmacy', { method: 'POST', body: data }),
+
+  // Get time summary for a queue entry
+  getQueueTimeSummary: (queueId: string) =>
+    apiRequest<any>(`/api/workflow/queue/${queueId}/time-summary`),
+
+  // Get patient queue history with time tracking
+  getPatientQueueHistory: (patientId: string) =>
+    apiRequest<any[]>(`/api/workflow/patients/${patientId}/queue-history`),
+};
+
+// Queue API
+export const queueApi = {
+  getAll: (servicePoint?: string, status?: string, page = 1, limit = 50, includeCompleted?: boolean, servicePointId?: number | string, doctorId?: number | string) =>
+    apiRequest<any[]>(`/api/queue?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(servicePoint && { servicePoint }), ...(status && { status }), ...(includeCompleted && { includeCompleted: 'true' }), ...(servicePointId && { servicePointId: String(servicePointId) }), ...(doctorId && { doctorId: String(doctorId) }) })}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/queue/${id}`),
+
+  cleanupOld: (dryRun: boolean = false) =>
+    apiRequest<any>('/api/queue/cleanup-old', { method: 'POST', body: { dryRun } }),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/queue', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/queue/${id}`, { method: 'PUT', body: data }),
+
+  updateStatus: (id: string, status: string) =>
+    apiRequest<any>(`/api/queue/${id}/status`, { method: 'PUT', body: { status } }),
+
+  transferRoom: (id: string, servicePointId: number) =>
+    apiRequest<any>(`/api/queue/${id}/transfer-room`, { method: 'POST', body: { servicePointId } }),
+
+  archive: (id: string) =>
+    apiRequest<any>(`/api/queue/${id}/archive`, { method: 'POST' }),
+
+  archiveCompleted: () =>
+    apiRequest<any>('/api/queue/archive-completed', { method: 'POST' }),
+
+  getHistory: (params?: { servicePoint?: string; status?: string; patientId?: string; startDate?: string; endDate?: string; page?: number; limit?: number }) => {
+    const queryParams = new URLSearchParams();
+    if (params?.servicePoint) queryParams.append('servicePoint', params.servicePoint);
+    if (params?.status) queryParams.append('status', params.status);
+    if (params?.patientId) queryParams.append('patientId', params.patientId);
+    if (params?.startDate) queryParams.append('startDate', params.startDate);
+    if (params?.endDate) queryParams.append('endDate', params.endDate);
+    if (params?.page) queryParams.append('page', params.page.toString());
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    return apiRequest<any[]>(`/api/queue/history?${queryParams.toString()}`);
+  },
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/queue/${id}`, { method: 'DELETE' }),
+};
+
+export const servicePointApi = {
+  getAll: (branchId?: string, pointType?: string, search?: string, isActive?: string) => {
+    const params = new URLSearchParams()
+    if (branchId) params.append('branchId', branchId)
+    if (pointType) params.append('pointType', pointType)
+    if (search) params.append('search', search)
+    if (isActive) params.append('isActive', isActive)
+    return apiRequest<any[]>(`/api/service-points?${params.toString()}`)
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/service-points/${id}`),
+
+  getMyAssignments: () =>
+    apiRequest<any>('/api/service-points/assignments/me'),
+
+  getUserAssignments: (userId: string | number) =>
+    apiRequest<any[]>(`/api/service-points/assignments/user/${userId}`),
+
+  assignUser: (data: {
+    userId: number
+    servicePointIds: number[]
+    defaultServicePointId?: number | null
+  }) =>
+    apiRequest<any>('/api/service-points/assignments/assign', { method: 'POST', body: data }),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/service-points', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/service-points/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/service-points/${id}`, { method: 'DELETE' }),
+};
+
+// Ledger API
+export const ledgerApi = {
+  // Accounts
+  getAccounts: (search?: string, accountType?: string, asOfDate?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(accountType && { accountType }), ...(asOfDate && { asOfDate }) });
+    return apiRequest<any[]>(`/api/ledger/accounts?${params.toString()}`);
+  },
+
+  getAccountById: (id: string, asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/accounts/${id}?${params.toString()}`);
+  },
+
+  getAccountTransactions: (id: string, startDate?: string, endDate?: string, asOfDate?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(startDate && { startDate }), ...(endDate && { endDate }), ...(asOfDate && { asOfDate }) });
+    return apiRequest<any[]>(`/api/ledger/accounts/${id}/transactions?${params.toString()}`);
+  },
+
+  createAccount: (data: any) =>
+    apiRequest<any>('/api/ledger/accounts', { method: 'POST', body: data }),
+
+  updateAccount: (id: string, data: any) =>
+    apiRequest<any>(`/api/ledger/accounts/${id}`, { method: 'PUT', body: data }),
+
+  deleteAccount: (id: string) =>
+    apiRequest<any>(`/api/ledger/accounts/${id}`, { method: 'DELETE' }),
+
+  // Transactions
+  getTransactions: (search?: string, startDate?: string, endDate?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/ledger/transactions?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(startDate && { startDate }), ...(endDate && { endDate }) })}`),
+
+  getTransactionById: (id: string) =>
+    apiRequest<any>(`/api/ledger/transactions/${id}`),
+
+  createTransaction: (data: any) =>
+    apiRequest<any>('/api/ledger/transactions', { method: 'POST', body: data }),
+
+  updateTransaction: (id: string, data: any) =>
+    apiRequest<any>(`/api/ledger/transactions/${id}`, { method: 'PUT', body: data }),
+
+  deleteTransaction: (id: string) =>
+    apiRequest<any>(`/api/ledger/transactions/${id}`, { method: 'DELETE' }),
+
+  // Financial Reports
+  getTrialBalance: (asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/reports/trial-balance?${params.toString()}`);
+  },
+
+  getIncomeStatement: (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any>(`/api/ledger/reports/income-statement?${params.toString()}`);
+  },
+
+  getBalanceSheet: (asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/reports/balance-sheet?${params.toString()}`);
+  },
+
+  // Patient & Staff Statements
+  getPatientStatement: (patientId: string, startDate?: string, endDate?: string, asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/reports/patient-statement/${patientId}?${params.toString()}`);
+  },
+
+  getStaffStatement: (staffId: string, startDate?: string, endDate?: string, asOfDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (asOfDate) params.append('asOfDate', asOfDate);
+    return apiRequest<any>(`/api/ledger/reports/staff-statement/${staffId}?${params.toString()}`);
+  },
+};
+
+// Procurement Vendors API
+export const vendorApi = {
+  getAll: (search?: string, status?: string, category?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/procurement/vendors?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(status && { status }), ...(category && { category }) })}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/procurement/vendors', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${id}`, { method: 'DELETE' }),
+
+  // Vendor Ratings
+  getRatings: (vendorId: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/ratings`),
+
+  createRating: (vendorId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/ratings`, { method: 'POST', body: data }),
+
+  // Vendor Products
+  getProducts: (vendorId: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/products`),
+
+  createProduct: (vendorId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/products`, { method: 'POST', body: data }),
+
+  updateProduct: (vendorId: string, productId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/products/${productId}`, { method: 'PUT', body: data }),
+
+  deleteProduct: (vendorId: string, productId: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/products/${productId}`, { method: 'DELETE' }),
+
+  // Vendor Contracts
+  getAllContracts: () =>
+    apiRequest<any[]>(`/api/procurement/vendors/contracts`),
+
+  getContracts: (vendorId: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/contracts`),
+
+  createContract: (vendorId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/contracts`, { method: 'POST', body: data }),
+
+  updateContract: (vendorId: string, contractId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/contracts/${contractId}`, { method: 'PUT', body: data }),
+
+  deleteContract: (vendorId: string, contractId: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/contracts/${contractId}`, { method: 'DELETE' }),
+
+  // Vendor Documents
+  getDocuments: (vendorId: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/documents`),
+
+  createDocument: (vendorId: string, formData: FormData) => {
+    // Use relative URL in browser, or public URL if set
+    const baseUrl = typeof window !== 'undefined'
+      ? (process.env.NEXT_PUBLIC_API_URL || '')
+      : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');
+    return fetch(`${baseUrl}/api/procurement/vendors/${vendorId}/documents`, {
+      method: 'POST',
+      body: formData,
+    }).then(res => res.ok ? res.json() : Promise.reject(res));
+  },
+
+  updateDocument: (vendorId: string, documentId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/documents/${documentId}`, { method: 'PUT', body: data }),
+
+  deleteDocument: (vendorId: string, documentId: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/documents/${documentId}`, { method: 'DELETE' }),
+
+  /** Fetch document bytes with Authorization (do not window.open the raw URL). */
+  downloadDocument: (vendorId: string, documentId: string, fallbackFilename = 'document') =>
+    fetchAuthenticatedBlob(
+      `/api/procurement/vendors/${vendorId}/documents/${documentId}/download`,
+      fallbackFilename
+    ),
+
+  // Vendor Issues
+  getIssues: (vendorId: string, status?: string, priority?: string) =>
+    apiRequest<any[]>(`/api/procurement/vendors/${vendorId}/issues?${new URLSearchParams({ ...(status && { status }), ...(priority && { priority }) })}`),
+
+  createIssue: (vendorId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/issues`, { method: 'POST', body: data }),
+
+  updateIssue: (vendorId: string, issueId: string, data: any) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/issues/${issueId}`, { method: 'PUT', body: data }),
+
+  deleteIssue: (vendorId: string, issueId: string) =>
+    apiRequest<any>(`/api/procurement/vendors/${vendorId}/issues/${issueId}`, { method: 'DELETE' }),
+
+  // Vendor Performance
+  getPerformance: () =>
+    apiRequest<any[]>(`/api/procurement/vendors/performance`),
+};
+
+// Purchase Orders API
+export const purchaseOrderApi = {
+  getAll: (vendorId?: string, status?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/procurement/purchase-orders?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(vendorId && { vendorId }), ...(status && { status }) })}`),
+
+  getByVendor: (vendorId: string, status?: string, page = 1, limit = 50) =>
+    apiRequest<any[]>(`/api/procurement/purchase-orders/vendors/${vendorId}?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }) })}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/procurement/purchase-orders/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/procurement/purchase-orders', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/procurement/purchase-orders/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/procurement/purchase-orders/${id}`, { method: 'DELETE' }),
+};
+
+// Employee API
+export const employeeApi = {
+  getAll: (search?: string, departmentId?: string, status?: string, positionId?: string, page = 1, limit = 50) =>
+    apiRequest<{ employees: any[], pagination: any }>(`/api/employees?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }), ...(departmentId && { departmentId }), ...(status && { status }), ...(positionId && { positionId }) })}`),
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/employees/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/employees', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/employees/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/employees/${id}`, { method: 'DELETE' }),
+
+  // Leave Management
+  getLeave: (employeeId: string, status?: string, leaveType?: string) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/leave?${new URLSearchParams({ ...(status && { status }), ...(leaveType && { leaveType }) })}`),
+
+  getAllLeave: (status?: string, leaveType?: string, employeeId?: string, page = 1, limit = 50) =>
+    apiRequest<{ leaves: any[], pagination: any }>(`/api/employees/leave?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(status && { status }), ...(leaveType && { leaveType }), ...(employeeId && { employeeId }) })}`),
+
+  createLeave: (employeeId: string, data: any) =>
+    apiRequest<any>(`/api/employees/${employeeId}/leave`, { method: 'POST', body: data }),
+
+  updateLeave: (leaveId: string, data: any) =>
+    apiRequest<any>(`/api/employees/leave/${leaveId}`, { method: 'PUT', body: data }),
+
+  deleteLeave: (leaveId: string) =>
+    apiRequest<any>(`/api/employees/leave/${leaveId}`, { method: 'DELETE' }),
+
+  getLeaveBalance: (employeeId: string, year?: number) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/leave/balance?${new URLSearchParams({ ...(year && { year: year.toString() }) })}`),
+
+  // Payroll
+  getSalary: (employeeId: string) =>
+    apiRequest<any>(`/api/employees/${employeeId}/salary`),
+
+  getSalaryHistory: (employeeId: string) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/salary/history`),
+
+  createSalary: (employeeId: string, data: any) =>
+    apiRequest<any>(`/api/employees/${employeeId}/salary`, { method: 'POST', body: data }),
+
+  getPayroll: (employeeId: string, startDate?: string, endDate?: string, status?: string) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/payroll?${new URLSearchParams({ ...(startDate && { startDate }), ...(endDate && { endDate }), ...(status && { status }) })}`),
+
+  createPayroll: (employeeId: string, data: any) =>
+    apiRequest<any>(`/api/employees/${employeeId}/payroll`, { method: 'POST', body: data }),
+
+  updatePayroll: (payrollId: string, data: any) =>
+    apiRequest<any>(`/api/employees/payroll/${payrollId}`, { method: 'PUT', body: data }),
+
+  // Promotions/Position History
+  getPromotions: (employeeId: string) =>
+    apiRequest<any[]>(`/api/employees/${employeeId}/promotions`),
+
+  createPromotion: (employeeId: string, data: any) =>
+    apiRequest<any>(`/api/employees/${employeeId}/promotions`, { method: 'POST', body: data }),
+
+  // Attendance
+  getAttendance: (employeeId: string, startDate?: string, endDate?: string) =>
+    apiRequest<any[]>(`/api/employees/attendance/${employeeId}?${new URLSearchParams({ ...(startDate && { startDate }), ...(endDate && { endDate }) })}`),
+
+  createAttendance: (data: any) =>
+    apiRequest<any>(`/api/employees/attendance`, { method: 'POST', body: data }),
+};
+
+export const payrollApi = {
+  listTransactions: (params?: {
+    startDate?: string
+    endDate?: string
+    status?: string
+    departmentId?: string
+    payrollRunId?: string
+    search?: string
+    page?: number
+    limit?: number
+  }) =>
+    apiRequest<{ transactions: any[]; pagination: { page: number; limit: number; total: number } }>(
+      `/api/payroll/transactions?${new URLSearchParams({
+        ...(params?.page != null ? { page: String(params.page) } : {}),
+        ...(params?.limit != null ? { limit: String(params.limit) } : {}),
+        ...(params?.startDate ? { startDate: params.startDate } : {}),
+        ...(params?.endDate ? { endDate: params.endDate } : {}),
+        ...(params?.status ? { status: params.status } : {}),
+        ...(params?.departmentId ? { departmentId: params.departmentId } : {}),
+        ...(params?.payrollRunId ? { payrollRunId: params.payrollRunId } : {}),
+        ...(params?.search ? { search: params.search } : {}),
+      })}`
+    ),
+
+  getTransaction: (payrollId: string) => apiRequest<any>(`/api/payroll/transactions/${payrollId}`),
+
+  getSummary: (params?: { startDate?: string; endDate?: string; status?: string }) =>
+    apiRequest<any>(
+      `/api/payroll/summary?${new URLSearchParams({
+        ...(params?.startDate ? { startDate: params.startDate } : {}),
+        ...(params?.endDate ? { endDate: params.endDate } : {}),
+        ...(params?.status ? { status: params.status } : {}),
+      })}`
+    ),
+
+  statutoryPreview: (grossPay: number, asOf?: string) =>
+    apiRequest<any>('/api/payroll/statutory-preview', {
+      method: 'POST',
+      body: { grossPay, ...(asOf ? { asOf, payPeriodEnd: asOf } : {}) },
+    }),
+
+  listStatutoryRates: (includeArchived?: boolean) =>
+    apiRequest<{ rateSets: any[] }>(
+      `/api/payroll/statutory-rates?${new URLSearchParams({
+        ...(includeArchived ? { includeArchived: '1' } : {}),
+      })}`
+    ),
+
+  getActiveStatutoryRate: (asOf?: string) =>
+    apiRequest<{ asOf: string; rateSet: any }>(
+      `/api/payroll/statutory-rates/active?${new URLSearchParams({
+        ...(asOf ? { asOf } : {}),
+      })}`
+    ),
+
+  getStatutoryRate: (rateSetId: string) => apiRequest<any>(`/api/payroll/statutory-rates/${rateSetId}`),
+
+  createStatutoryRate: (body: any) =>
+    apiRequest<any>('/api/payroll/statutory-rates', { method: 'POST', body }),
+
+  updateStatutoryRate: (rateSetId: string, body: any) =>
+    apiRequest<any>(`/api/payroll/statutory-rates/${rateSetId}`, { method: 'PUT', body }),
+
+  archiveStatutoryRate: (rateSetId: string) =>
+    apiRequest<any>(`/api/payroll/statutory-rates/${rateSetId}/archive`, { method: 'POST', body: {} }),
+
+  batchPreview: (body: {
+    payPeriodStart: string
+    payPeriodEnd: string
+    paymentDate: string
+    departmentId?: number
+    employeeIds?: number[]
+    includeOnLeave?: boolean
+    applyStatutory?: boolean
+    employeeAdjustments?: Record<string, unknown>
+    notes?: string
+  }) => apiRequest<any>('/api/payroll/batch/preview', { method: 'POST', body }),
+
+  batchRun: (body: {
+    payPeriodStart: string
+    payPeriodEnd: string
+    paymentDate: string
+    departmentId?: number
+    employeeIds?: number[]
+    includeOnLeave?: boolean
+    applyStatutory?: boolean
+    employeeAdjustments?: Record<string, unknown>
+    notes?: string
+  }) => apiRequest<any>('/api/payroll/batch/run', { method: 'POST', body }),
+
+  listRuns: (page = 1, limit = 20) =>
+    apiRequest<{ runs: any[]; pagination: { page: number; limit: number; total: number } }>(
+      `/api/payroll/runs?${new URLSearchParams({ page: String(page), limit: String(limit) })}`
+    ),
+
+  getRun: (runId: string) => apiRequest<{ run: any; lines: any[] }>(`/api/payroll/runs/${runId}`),
+
+  markRunPaid: (runId: string, referenceNumber?: string) =>
+    apiRequest<any>(`/api/payroll/runs/${runId}/mark-paid`, {
+      method: 'POST',
+      body: referenceNumber ? { referenceNumber } : {},
+    }),
+
+  bulkStatus: (payrollIds: number[], paymentStatus: string, referenceNumber?: string) =>
+    apiRequest<{ updated: number }>('/api/payroll/bulk-status', {
+      method: 'POST',
+      body: { payrollIds, paymentStatus, referenceNumber },
+    }),
+
+  emailPayslip: (body: {
+    payrollId: number
+    email: string
+    pdfBase64: string
+    subject?: string
+    message?: string
+  }) => apiRequest<any>('/api/payroll/payslips/email', { method: 'POST', body }),
+
+  emailPayslipsBulk: (body: {
+    subject?: string
+    message?: string
+    items: Array<{ payrollId: number; email: string; send?: boolean; pdfBase64: string }>
+  }) => apiRequest<{ results: any[]; sent: number; failed: number }>('/api/payroll/payslips/email-bulk', { method: 'POST', body }),
+
+  downloadBankExport: (params?: {
+    startDate?: string
+    endDate?: string
+    payrollRunId?: string
+    status?: string
+  }) => {
+    const qs = new URLSearchParams({
+      ...(params?.startDate ? { startDate: params.startDate } : {}),
+      ...(params?.endDate ? { endDate: params.endDate } : {}),
+      ...(params?.payrollRunId ? { payrollRunId: params.payrollRunId } : {}),
+      ...(params?.status ? { status: params.status } : { status: 'pending' }),
+    }).toString()
+    return fetchAuthenticatedBlob(`/api/payroll/export/bank?${qs}`, 'payroll-bank-export.csv')
+  },
+};
+
+// Dashboard API
+export const dashboardApi = {
+  getStats: () =>
+    apiRequest<any>('/api/dashboard/stats'),
+
+  getRecentActivities: (limit?: number) =>
+    apiRequest<any>(`/api/dashboard/recent-activities?${new URLSearchParams({ ...(limit && { limit: limit.toString() }) })}`),
+
+  getFacilityPerformance: (params?: { days?: number; branchId?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.days) query.append('days', String(params.days));
+    if (params?.branchId) query.append('branchId', params.branchId);
+    const qs = query.toString();
+    return apiRequest<{
+      days: number;
+      generatedAt: string;
+      facilities: any[];
+      totals: Record<string, number>;
+      transfers?: any[];
+    }>(`/api/dashboard/facility-performance${qs ? `?${qs}` : ''}`);
+  },
+
+  getServicePointPerformance: (params?: { days?: number; branchId?: string; pointType?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.days) query.append('days', String(params.days));
+    if (params?.branchId) query.append('branchId', params.branchId);
+    if (params?.pointType) query.append('pointType', params.pointType);
+    const qs = query.toString();
+    return apiRequest<{
+      days: number;
+      branchId: number | null;
+      pointType: string | null;
+      generatedAt: string;
+      servicePoints: any[];
+      unassignedQueues: any[];
+      byType: any[];
+      totals: Record<string, number>;
+    }>(`/api/dashboard/service-point-performance${qs ? `?${qs}` : ''}`);
+  },
+};
+
+// Analytics API
+export const analyticsApi = {
+  getPatients: (months?: number) =>
+    apiRequest<any[]>(`/api/analytics/patients?${new URLSearchParams({ ...(months && { months: months.toString() }) })}`),
+
+  getRevenue: (months?: number) =>
+    apiRequest<any[]>(`/api/analytics/revenue?${new URLSearchParams({ ...(months && { months: months.toString() }) })}`),
+
+  getDepartments: () =>
+    apiRequest<any[]>('/api/analytics/departments'),
+
+  getSummary: () =>
+    apiRequest<any>('/api/analytics/summary'),
+
+  getRevenueBySource: (params?: { months?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.months) queryParams.append('months', params.months.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/analytics/revenue-by-source${query ? `?${query}` : ''}`)
+  },
+
+  getPharmacySales: (params?: { months?: number; limit?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.months) queryParams.append('months', params.months.toString())
+    if (params?.limit) queryParams.append('limit', params.limit.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any>(`/api/analytics/pharmacy-sales${query ? `?${query}` : ''}`)
+  },
+
+  getInventoryValue: () =>
+    apiRequest<any>(`/api/analytics/inventory-value`),
+
+  getInventoryValueByLocation: (filters?: { location?: string; search?: string; dateFrom?: string; dateTo?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (filters?.location && filters.location !== 'all') queryParams.append('location', filters.location)
+    if (filters?.search) queryParams.append('search', filters.search)
+    if (filters?.dateFrom) queryParams.append('dateFrom', filters.dateFrom)
+    if (filters?.dateTo) queryParams.append('dateTo', filters.dateTo)
+    const query = queryParams.toString()
+    return apiRequest<{ data: any[]; totals: { quantity: number; amountValue: number } }>(`/api/pharmacy/drug-inventory/value-by-location${query ? `?${query}` : ''}`)
+  },
+
+  getPaymentMethods: (params?: { months?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.months) queryParams.append('months', params.months.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/analytics/payment-methods${query ? `?${query}` : ''}`)
+  },
+
+  getRevenueTrends: (params?: { months?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.months) queryParams.append('months', params.months.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/analytics/revenue-trends${query ? `?${query}` : ''}`)
+  },
+
+  getRevenueWeekly: (params?: { weeks?: number; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.weeks) queryParams.append('weeks', params.weeks.toString())
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/analytics/revenue-weekly${query ? `?${query}` : ''}`)
+  },
+};
+
+// Service Charges API
+export const serviceChargeApi = {
+  getAll: (status?: string, category?: string, department?: string, search?: string, chargeType?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (category) params.append('category', category);
+    if (department) params.append('department', department);
+    if (search) params.append('search', search);
+    if (chargeType) params.append('chargeType', chargeType);
+    return apiRequest<any[]>(`/api/billing/charges?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/billing/charges/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/billing/charges', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/charges/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/billing/charges/${id}`, { method: 'DELETE' }),
+};
+
+// Specialist Charges API
+export const specialistChargeApi = {
+  getAll: (chargeId?: string, doctorId?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (chargeId) params.append('chargeId', chargeId);
+    if (doctorId) params.append('doctorId', doctorId);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/billing/specialist-charges?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/billing/specialist-charges/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/billing/specialist-charges', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/specialist-charges/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/billing/specialist-charges/${id}`, { method: 'DELETE' }),
+};
+
+// Consumables Charges API
+export const consumablesChargeApi = {
+  getAll: (chargeId?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (chargeId) params.append('chargeId', chargeId);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/billing/consumables-charges?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/billing/consumables-charges/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/billing/consumables-charges', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/consumables-charges/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/billing/consumables-charges/${id}`, { method: 'DELETE' }),
+};
+
+// Billing/Invoice API
+export const billingApi = {
+  getInvoices: (patientId?: string, status?: string) => {
+    const params = new URLSearchParams();
+    if (patientId) params.append('patientId', patientId);
+    if (status) params.append('status', status);
+    return apiRequest<any[]>(`/api/billing/invoices?${params.toString()}`);
+  },
+
+  getInvoiceById: (id: string) =>
+    apiRequest<any>(`/api/billing/invoices/${id}`),
+
+  getPendingInvoicesForPatient: (patientId: string) =>
+    apiRequest<any[]>(`/api/billing/invoices/patient/${patientId}/pending`),
+
+  getCashierDailySummary: (date?: string) => {
+    const params = new URLSearchParams()
+    if (date) params.append('date', date)
+    const query = params.toString()
+    return apiRequest<{
+      date: string
+      branchIds: number[]
+      collectedTotal: number
+      waivedTotal: number
+      paymentCount: number
+      waiverCount: number
+      byPaymentMethod: { paymentMethod: string; count: number; total: number }[]
+      payments: any[]
+      waivers: any[]
+    }>(`/api/billing/cashier/daily-summary${query ? `?${query}` : ''}`)
+  },
+
+  createInvoice: (data: any) =>
+    apiRequest<any>('/api/billing/invoices', { method: 'POST', body: data }),
+
+  updateInvoice: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/invoices/${id}`, { method: 'PUT', body: data }),
+
+  deleteInvoice: (id: string) =>
+    apiRequest<any>(`/api/billing/invoices/${id}`, { method: 'DELETE' }),
+
+  recordPayment: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/invoices/${id}/payment`, { method: 'POST', body: data }),
+
+  getInvoiceForServiceOrder: (kind: 'lab' | 'radiology', orderNumber: string) => {
+    const q = new URLSearchParams({ kind, orderNumber });
+    return apiRequest<any>(`/api/billing/invoices/for-service-order?${q.toString()}`);
+  },
+
+  /** Cloudsasa M-Pesa STK Push + hospital paybill settings (no secrets) */
+  getMpesaConfig: (params?: {
+    invoiceNumber?: string;
+    patientId?: number;
+    patientNumber?: string;
+  }) => {
+    const queryParams = new URLSearchParams();
+    if (params?.invoiceNumber) queryParams.append('invoiceNumber', params.invoiceNumber);
+    if (params?.patientId != null) queryParams.append('patientId', String(params.patientId));
+    if (params?.patientNumber) queryParams.append('patientNumber', params.patientNumber);
+    const qs = queryParams.toString();
+    return apiRequest<MpesaPublicConfig>(
+      `/api/billing/mpesa/config${qs ? `?${qs}` : ''}`
+    );
+  },
+
+  getMpesaSettings: () => apiRequest<MpesaAdminSettings>('/api/billing/mpesa/settings'),
+
+  updateMpesaSettings: (data: Partial<MpesaAdminSettings>) =>
+    apiRequest<MpesaAdminSettings>('/api/billing/mpesa/settings', { method: 'PUT', body: data }),
+
+  getMpesaRegister: (params?: {
+    status?: string;
+    patientId?: number;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  }) => {
+    const queryParams = new URLSearchParams();
+    if (params?.status) queryParams.append('status', params.status);
+    if (params?.patientId != null) queryParams.append('patientId', String(params.patientId));
+    if (params?.from) queryParams.append('from', params.from);
+    if (params?.to) queryParams.append('to', params.to);
+    if (params?.page != null) queryParams.append('page', String(params.page));
+    if (params?.limit != null) queryParams.append('limit', String(params.limit));
+    const qs = queryParams.toString();
+    return apiRequest<MpesaRegisterResponse>(
+      `/api/billing/mpesa/register${qs ? `?${qs}` : ''}`
+    );
+  },
+
+  initiateMpesaStk: (data: {
+    amount: number;
+    phone: string;
+    patientId?: number;
+    allocations: { invoiceId: number; amount: number; invoiceNumber?: string }[];
+    batchReceiptNumber?: string;
+  }) => apiRequest<any>('/api/billing/mpesa/stk-push', { method: 'POST', body: data }),
+
+  getMpesaStkStatus: (checkoutRequestId: string) =>
+    apiRequest<any>(`/api/billing/mpesa/stk-status/${encodeURIComponent(checkoutRequestId)}`),
+
+  finalizeMpesaStk: (checkoutRequestId: string) =>
+    apiRequest<any>(`/api/billing/mpesa/finalize/${encodeURIComponent(checkoutRequestId)}`, {
+      method: 'POST',
+    }),
+
+  getInvoiceStats: () =>
+    apiRequest<any>('/api/billing/invoices/stats/summary'),
+
+  // Mobile Payment Logs
+  getMobilePaymentLogs: (params?: { search?: string; mobileProvider?: string; startDate?: string; endDate?: string; page?: number; limit?: number }) => {
+    const queryParams = new URLSearchParams();
+    if (params?.search) queryParams.append('search', params.search);
+    if (params?.mobileProvider) queryParams.append('mobileProvider', params.mobileProvider);
+    if (params?.startDate) queryParams.append('startDate', params.startDate);
+    if (params?.endDate) queryParams.append('endDate', params.endDate);
+    if (params?.page) queryParams.append('page', params.page.toString());
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    return apiRequest<any>(`/api/billing/mobile-payment-logs?${queryParams.toString()}`);
+  },
+
+  getMobilePaymentLogById: (id: string) =>
+    apiRequest<any>(`/api/billing/mobile-payment-logs/${id}`),
+
+  // Insurance Claim Integration
+  getInvoiceInsuranceInfo: (invoiceId: string) =>
+    apiRequest<any>(`/api/billing/invoices/${invoiceId}/insurance-info`),
+
+  createClaimFromInvoice: (invoiceId: string, data?: any) =>
+    apiRequest<any>(`/api/billing/invoices/${invoiceId}/create-claim`, { method: 'POST', body: data }),
+
+  getInvoicePayments: (invoiceId: string) =>
+    apiRequest<any[]>(`/api/billing/invoices/${invoiceId}/payments`),
+
+  getPaymentBatch: (batchReceiptNumber: string, patientId?: string) => {
+    const params = patientId ? `?patientId=${patientId}` : '';
+    return apiRequest<any>(`/api/billing/payment-batches/${batchReceiptNumber}${params}`);
+  },
+
+  getPatientPayments: (patientId: string) =>
+    apiRequest<any[]>(`/api/billing/patients/${patientId}/payments`),
+
+  getAllPayments: (params?: { patientId?: string; startDate?: string; endDate?: string }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.patientId) queryParams.append('patientId', params.patientId)
+    if (params?.startDate) queryParams.append('startDate', params.startDate)
+    if (params?.endDate) queryParams.append('endDate', params.endDate)
+    const query = queryParams.toString()
+    return apiRequest<any[]>(`/api/billing/payments${query ? `?${query}` : ''}`)
+  },
+
+  createMobilePaymentLog: (data: any) =>
+    apiRequest<any>('/api/billing/mobile-payment-logs', { method: 'POST', body: data }),
+
+  updateMobilePaymentLog: (id: string, data: any) =>
+    apiRequest<any>(`/api/billing/mobile-payment-logs/${id}`, { method: 'PUT', body: data }),
+
+  deleteMobilePaymentLog: (id: string) =>
+    apiRequest<any>(`/api/billing/mobile-payment-logs/${id}`, { method: 'DELETE' }),
+};
+
+// Receivables API
+export const receivableApi = {
+  getAll: (status?: string, patientId?: string, search?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (patientId) params.append('patientId', patientId);
+    if (search) params.append('search', search);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/receivables?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/receivables/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/receivables', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/receivables/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/receivables/${id}`, { method: 'DELETE' }),
+
+  recordPayment: (id: string, data: any) =>
+    apiRequest<any>(`/api/receivables/${id}/payment`, { method: 'POST', body: data }),
+
+  getStats: () =>
+    apiRequest<any>('/api/receivables/stats/summary'),
+};
+
+// Payables API
+export const payableApi = {
+  getAll: (status?: string, vendorId?: string, search?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (vendorId) params.append('vendorId', vendorId);
+    if (search) params.append('search', search);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/payables?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/payables/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/payables', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/payables/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/payables/${id}`, { method: 'DELETE' }),
+
+  recordPayment: (id: string, data: any) =>
+    apiRequest<any>(`/api/payables/${id}/payment`, { method: 'POST', body: data }),
+
+  getSummary: () =>
+    apiRequest<any>('/api/payables/stats/summary'),
+};
+
+// Role API
+// Role Menu Access API
+export const roleMenuApi = {
+  getMenuConfig: (roleId: string) =>
+    apiRequest<any>(`/api/roles/${roleId}/menu-config`),
+
+  updateMenuConfig: (roleId: string, config: {
+    categories?: Array<{ categoryId: string; isAllowed: boolean }>;
+    menuItems?: Array<{ categoryId: string; menuItemPath: string; isAllowed: boolean }>;
+    tabs?: Array<{ pagePath: string; tabId: string; isAllowed: boolean }>;
+    queues?: Array<{ servicePoint: string; isAllowed: boolean }>;
+  }) =>
+    apiRequest<any>(`/api/roles/${roleId}/menu-config`, { method: 'POST', body: config }),
+
+  getUserMenuAccess: (userId?: string) => {
+    const params = userId ? `?userId=${userId}` : '';
+    return apiRequest<any>(`/api/roles/users/me/menu-access${params}`);
+  },
+};
+
+export const roleApi = {
+  getAll: () =>
+    apiRequest<any[]>('/api/roles'),
+
+  getUsersByRole: (roleId: string) =>
+    apiRequest<{ role: any; users: any[] }>(`/api/roles/${roleId}/users`),
+  getById: (id: string) =>
+    apiRequest<any>(`/api/roles/${id}`),
+  create: (data: any) =>
+    apiRequest<any>('/api/roles', { method: 'POST', body: data }),
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/roles/${id}`, { method: 'PUT', body: data }),
+  delete: (id: string) =>
+    apiRequest<any>(`/api/roles/${id}`, { method: 'DELETE' }),
+};
+
+// Privilege API
+export const privilegeApi = {
+  getAll: (module?: string, groupByModule?: boolean) =>
+    apiRequest<any[]>(`/api/privileges?${new URLSearchParams({ ...(module && { module }), ...(groupByModule && { groupByModule: 'true' }) })}`),
+  getById: (id: string) =>
+    apiRequest<any>(`/api/privileges/${id}`),
+  create: (data: any) =>
+    apiRequest<any>('/api/privileges', { method: 'POST', body: data }),
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/privileges/${id}`, { method: 'PUT', body: data }),
+  delete: (id: string) =>
+    apiRequest<any>(`/api/privileges/${id}`, { method: 'DELETE' }),
+};
+
+// Budget API
+export const budgetApi = {
+  getAll: (status?: string, departmentId?: string, budgetPeriod?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (departmentId) params.append('departmentId', departmentId);
+    if (budgetPeriod) params.append('budgetPeriod', budgetPeriod);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/budgets?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/budgets/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/budgets', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/budgets/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/budgets/${id}`, { method: 'DELETE' }),
+
+  getStats: () =>
+    apiRequest<any>('/api/budgets/stats/summary'),
+};
+
+// Cash Management API
+export const cashApi = {
+  getTransactions: (transactionType?: string, startDate?: string, endDate?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (transactionType) params.append('transactionType', transactionType);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/cash/transactions?${params.toString()}`);
+  },
+
+  getTransactionById: (id: string) =>
+    apiRequest<any>(`/api/cash/transactions/${id}`),
+
+  createTransaction: (data: any) =>
+    apiRequest<any>('/api/cash/transactions', { method: 'POST', body: data }),
+
+  updateTransaction: (id: string, data: any) =>
+    apiRequest<any>(`/api/cash/transactions/${id}`, { method: 'PUT', body: data }),
+
+  deleteTransaction: (id: string) =>
+    apiRequest<any>(`/api/cash/transactions/${id}`, { method: 'DELETE' }),
+
+  getAccounts: (status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/cash/accounts?${params.toString()}`);
+  },
+
+  getStats: () =>
+    apiRequest<any>('/api/cash/stats/summary'),
+};
+
+// Asset Management API
+export const assetApi = {
+  getAll: (status?: string, category?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (category) params.append('category', category);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/assets?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/assets/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/assets', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/assets/${id}`, { method: 'DELETE' }),
+
+  getStats: () =>
+    apiRequest<any>('/api/assets/stats/summary'),
+
+  // Critical Assets
+  getCriticalAssets: () =>
+    apiRequest<any[]>('/api/assets/critical/list'),
+
+  getVerificationHistory: (assetId?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (assetId) params.append('assetId', assetId);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/assets/critical/verification-history?${params.toString()}`);
+  },
+
+  createDailyLog: (data: any) =>
+    apiRequest<any>('/api/assets/critical/daily-log', { method: 'POST', body: data }),
+
+  bulkVerify: (data: any) =>
+    apiRequest<any>('/api/assets/critical/bulk-verify', { method: 'POST', body: data }),
+
+  getCriticalStats: (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any>(`/api/assets/critical/stats?${params.toString()}`);
+  },
+
+  // Maintenance Records
+  getMaintenanceByAsset: (assetId: string, status?: string, type?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (type) params.append('type', type);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/assets/${assetId}/maintenance?${params.toString()}`);
+  },
+
+  getUpcomingMaintenance: (days?: number) => {
+    const params = new URLSearchParams();
+    if (days) params.append('days', days.toString());
+    return apiRequest<any[]>(`/api/assets/maintenance/upcoming?${params.toString()}`);
+  },
+
+  getMaintenanceHistory: (assetId?: string, startDate?: string, endDate?: string, status?: string, type?: string) => {
+    const params = new URLSearchParams();
+    if (assetId) params.append('assetId', assetId);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (status) params.append('status', status);
+    if (type) params.append('type', type);
+    return apiRequest<any[]>(`/api/assets/maintenance/history?${params.toString()}`);
+  },
+
+  createMaintenance: (data: any) =>
+    apiRequest<any>('/api/assets/maintenance', { method: 'POST', body: data }),
+
+  updateMaintenance: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/maintenance/${id}`, { method: 'PUT', body: data }),
+
+  deleteMaintenance: (id: string) =>
+    apiRequest<any>(`/api/assets/maintenance/${id}`, { method: 'DELETE' }),
+
+  getMaintenanceStats: () =>
+    apiRequest<any>('/api/assets/maintenance/stats'),
+
+  completeMaintenance: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/maintenance/${id}/complete`, { method: 'POST', body: data }),
+
+  // Asset Assignments
+  getAssignmentsByAsset: (assetId: string, status?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    return apiRequest<any[]>(`/api/assets/${assetId}/assignments?${params.toString()}`);
+  },
+
+  getCurrentAssignments: (userId?: string, department?: string) => {
+    const params = new URLSearchParams();
+    if (userId) params.append('userId', userId);
+    if (department) params.append('department', department);
+    return apiRequest<any[]>(`/api/assets/assignments/current?${params.toString()}`);
+  },
+
+  getAssignmentHistory: (assetId?: string, userId?: string, status?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (assetId) params.append('assetId', assetId);
+    if (userId) params.append('userId', userId);
+    if (status) params.append('status', status);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any[]>(`/api/assets/assignments/history?${params.toString()}`);
+  },
+
+  createAssignment: (data: any) =>
+    apiRequest<any>('/api/assets/assignments', { method: 'POST', body: data }),
+
+  updateAssignment: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/assignments/${id}`, { method: 'PUT', body: data }),
+
+  returnAssignment: (id: string, data: any) =>
+    apiRequest<any>(`/api/assets/assignments/${id}/return`, { method: 'POST', body: data }),
+
+  deleteAssignment: (id: string) =>
+    apiRequest<any>(`/api/assets/assignments/${id}`, { method: 'DELETE' }),
+
+  getAssignmentStats: () =>
+    apiRequest<any>('/api/assets/assignments/stats'),
+};
+
+// Insurance Management API
+export const insuranceApi = {
+  // Providers
+  getProviders: (status?: string, providerType?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (providerType) params.append('providerType', providerType);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/insurance/providers?${params.toString()}`);
+  },
+
+  getProviderById: (id: string) =>
+    apiRequest<any>(`/api/insurance/providers/${id}`),
+
+  createProvider: (data: any) =>
+    apiRequest<any>('/api/insurance/providers', { method: 'POST', body: data }),
+
+  updateProvider: (id: string, data: any) =>
+    apiRequest<any>(`/api/insurance/providers/${id}`, { method: 'PUT', body: data }),
+
+  deleteProvider: (id: string) =>
+    apiRequest<any>(`/api/insurance/providers/${id}`, { method: 'DELETE' }),
+
+  /** Remove duplicate providers (keep one per unique name, case-insensitive) */
+  cleanupDuplicateProviders: () =>
+    apiRequest<{ message: string; deleted: number; kept: number }>(
+      '/api/insurance/providers/cleanup-duplicates',
+      { method: 'POST' }
+    ),
+
+  // Packages
+  getPackages: (providerId?: string, status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (providerId) params.append('providerId', providerId);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/insurance/packages?${params.toString()}`);
+  },
+
+  getPackageById: (id: string) =>
+    apiRequest<any>(`/api/insurance/packages/${id}`),
+
+  createPackage: (data: any) =>
+    apiRequest<any>('/api/insurance/packages', { method: 'POST', body: data }),
+
+  updatePackage: (id: string, data: any) =>
+    apiRequest<any>(`/api/insurance/packages/${id}`, { method: 'PUT', body: data }),
+
+  deletePackage: (id: string) =>
+    apiRequest<any>(`/api/insurance/packages/${id}`, { method: 'DELETE' }),
+
+  /** Remove duplicate packages (keep one per provider + package name, case-insensitive) */
+  cleanupDuplicatePackages: () =>
+    apiRequest<{ message: string; deleted: number; kept: number }>(
+      '/api/insurance/packages/cleanup-duplicates',
+      { method: 'POST' }
+    ),
+
+  // Insurance charge rates (insurer-specific rates per charge, over time)
+  getChargeRates: (providerId?: string, chargeId?: string, asOf?: string) => {
+    const params = new URLSearchParams();
+    if (providerId) params.append('providerId', providerId);
+    if (chargeId) params.append('chargeId', chargeId);
+    if (asOf) params.append('asOf', asOf);
+    return apiRequest<any[]>(`/api/insurance/charge-rates?${params.toString()}`);
+  },
+  getChargeRateEffective: (chargeId: string, providerId: string, date?: string) =>
+    apiRequest<any>(`/api/insurance/charge-rates/effective?chargeId=${chargeId}&providerId=${providerId}${date ? `&date=${date}` : ''}`),
+  getChargeRateById: (id: string) => apiRequest<any>(`/api/insurance/charge-rates/${id}`),
+  createChargeRate: (data: any) => apiRequest<any>('/api/insurance/charge-rates', { method: 'POST', body: data }),
+  updateChargeRate: (id: string, data: any) => apiRequest<any>(`/api/insurance/charge-rates/${id}`, { method: 'PUT', body: data }),
+  deleteChargeRate: (id: string) => apiRequest<any>(`/api/insurance/charge-rates/${id}`, { method: 'DELETE' }),
+
+  // Inpatient charge rates (cash-paying inpatients; can vary by ward/ward type)
+  getInpatientChargeRates: (chargeId?: string, wardId?: string, wardType?: string, asOf?: string) => {
+    const params = new URLSearchParams();
+    if (chargeId) params.append('chargeId', chargeId);
+    if (wardId) params.append('wardId', wardId);
+    if (wardType) params.append('wardType', wardType);
+    if (asOf) params.append('asOf', asOf);
+    return apiRequest<any[]>(`/api/insurance/inpatient-charge-rates?${params.toString()}`);
+  },
+  getInpatientChargeRateEffective: (chargeId: string, wardId?: string, wardType?: string, date?: string) => {
+    const params = new URLSearchParams({ chargeId });
+    if (wardId) params.append('wardId', wardId);
+    if (wardType) params.append('wardType', wardType);
+    if (date) params.append('date', date);
+    return apiRequest<any>(`/api/insurance/inpatient-charge-rates/effective?${params.toString()}`);
+  },
+  getInpatientChargeRateById: (id: string) => apiRequest<any>(`/api/insurance/inpatient-charge-rates/${id}`),
+  createInpatientChargeRate: (data: any) => apiRequest<any>('/api/insurance/inpatient-charge-rates', { method: 'POST', body: data }),
+  updateInpatientChargeRate: (id: string, data: any) => apiRequest<any>(`/api/insurance/inpatient-charge-rates/${id}`, { method: 'PUT', body: data }),
+  deleteInpatientChargeRate: (id: string) => apiRequest<any>(`/api/insurance/inpatient-charge-rates/${id}`, { method: 'DELETE' }),
+
+  // Centralized charge rate rules (single source of truth for pricing overrides)
+  getChargeRateRules: (filters?: {
+    payerType?: string
+    providerId?: string
+    chargeId?: string
+    wardId?: string
+    wardType?: string
+    asOf?: string
+  }) => {
+    const params = new URLSearchParams()
+    if (filters?.payerType) params.append("payerType", filters.payerType)
+    if (filters?.providerId) params.append("providerId", filters.providerId)
+    if (filters?.chargeId) params.append("chargeId", filters.chargeId)
+    if (filters?.wardId) params.append("wardId", filters.wardId)
+    if (filters?.wardType) params.append("wardType", filters.wardType)
+    if (filters?.asOf) params.append("asOf", filters.asOf)
+    return apiRequest<any[]>(`/api/insurance/charge-rate-rules?${params.toString()}`)
+  },
+  createChargeRateRule: (data: any) =>
+    apiRequest<any>("/api/insurance/charge-rate-rules", { method: "POST", body: data }),
+  updateChargeRateRule: (id: string, data: any) =>
+    apiRequest<any>(`/api/insurance/charge-rate-rules/${id}`, { method: "PUT", body: data }),
+  deleteChargeRateRule: (id: string) =>
+    apiRequest<any>(`/api/insurance/charge-rate-rules/${id}`, { method: "DELETE" }),
+
+  // Policies
+  getPolicies: (patientId?: string, providerId?: string, status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (patientId) params.append('patientId', patientId);
+    if (providerId) params.append('providerId', providerId);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/insurance/policies?${params.toString()}`);
+  },
+
+  getPolicyById: (id: string) =>
+    apiRequest<any>(`/api/insurance/policies/${id}`),
+
+  createPolicy: (data: any) =>
+    apiRequest<any>('/api/insurance/policies', { method: 'POST', body: data }),
+
+  updatePolicy: (id: string, data: any) =>
+    apiRequest<any>(`/api/insurance/policies/${id}`, { method: 'PUT', body: data }),
+
+  deletePolicy: (id: string) =>
+    apiRequest<any>(`/api/insurance/policies/${id}`, { method: 'DELETE' }),
+
+  // Statistics
+  getStats: () =>
+    apiRequest<any>('/api/insurance/stats/summary'),
+
+  // Claims
+  getClaims: (status?: string, providerId?: string, patientId?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (providerId) params.append('providerId', providerId);
+    if (patientId) params.append('patientId', patientId);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/insurance/claims?${params.toString()}`);
+  },
+
+  getClaimById: (id: string) =>
+    apiRequest<any>(`/api/insurance/claims/${id}`),
+
+  createClaim: (data: any) =>
+    apiRequest<any>('/api/insurance/claims', { method: 'POST', body: data }),
+
+  updateClaim: (id: string, data: any) =>
+    apiRequest<any>(`/api/insurance/claims/${id}`, { method: 'PUT', body: data }),
+
+  // Claim Requirements
+  getClaimRequirements: (claimId: string) =>
+    apiRequest<any[]>(`/api/insurance/claims/${claimId}/requirements`),
+
+  updateClaimRequirement: (claimId: string, requirementId: string, data: any) =>
+    apiRequest<any>(`/api/insurance/claims/${claimId}/requirements/${requirementId}`, { method: 'PUT', body: data }),
+
+  // Provider Requirements
+  getProviderRequirements: (providerId: string) =>
+    apiRequest<any>(`/api/insurance/providers/${providerId}/requirements`),
+
+  createRequirementTemplate: (providerId: string, data: any) =>
+    apiRequest<any>(`/api/insurance/providers/${providerId}/requirements/template`, { method: 'POST', body: data }),
+
+  addRequirement: (providerId: string, data: any) =>
+    apiRequest<any>(`/api/insurance/providers/${providerId}/requirements`, { method: 'POST', body: data }),
+
+  updateRequirement: (providerId: string, requirementId: string, data: any) =>
+    apiRequest<any>(`/api/insurance/providers/${providerId}/requirements/${requirementId}`, { method: 'PUT', body: data }),
+
+  deleteRequirement: (providerId: string, requirementId: string) =>
+    apiRequest<any>(`/api/insurance/providers/${providerId}/requirements/${requirementId}`, { method: 'DELETE' }),
+};
+
+// Revenue Share Management API
+export const revenueShareApi = {
+  // Rules
+  getRules: (ruleType?: string, departmentId?: string, status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (ruleType) params.append('ruleType', ruleType);
+    if (departmentId) params.append('departmentId', departmentId);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/revenue-share/rules?${params.toString()}`);
+  },
+
+  getRuleById: (id: string) =>
+    apiRequest<any>(`/api/revenue-share/rules/${id}`),
+
+  createRule: (data: any) =>
+    apiRequest<any>('/api/revenue-share/rules', { method: 'POST', body: data }),
+
+  updateRule: (id: string, data: any) =>
+    apiRequest<any>(`/api/revenue-share/rules/${id}`, { method: 'PUT', body: data }),
+
+  deleteRule: (id: string) =>
+    apiRequest<any>(`/api/revenue-share/rules/${id}`, { method: 'DELETE' }),
+
+  // Distributions
+  getDistributions: (status?: string, startDate?: string, endDate?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/revenue-share/distributions?${params.toString()}`);
+  },
+
+  getDistributionById: (id: string) =>
+    apiRequest<any>(`/api/revenue-share/distributions/${id}`),
+
+  createDistribution: (data: any) =>
+    apiRequest<any>('/api/revenue-share/distributions', { method: 'POST', body: data }),
+
+  updateDistribution: (id: string, data: any) =>
+    apiRequest<any>(`/api/revenue-share/distributions/${id}`, { method: 'PUT', body: data }),
+
+  deleteDistribution: (id: string) =>
+    apiRequest<any>(`/api/revenue-share/distributions/${id}`, { method: 'DELETE' }),
+
+  // Statistics
+  getStats: () =>
+    apiRequest<any>('/api/revenue-share/stats/summary'),
+};
+
+// Diagnoses API (ICD-10)
+export const diagnosesApi = {
+  getAll: (search?: string, page = 1, limit = 100) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+    if (search && search.trim()) {
+      params.append('search', search.trim());
+    }
+    return apiRequest<any[]>(`/api/diagnoses?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/diagnoses/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/diagnoses', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/diagnoses/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/diagnoses/${id}`, { method: 'DELETE' }),
+};
+
+// Procedures API
+export const proceduresApi = {
+  getAll: (search?: string, category?: string, isActive?: boolean, chargeId?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (category) params.append('category', category);
+    if (isActive !== undefined) params.append('isActive', isActive.toString());
+    if (chargeId) params.append('chargeId', chargeId);
+    return apiRequest<any[]>(`/api/procedures?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/procedures/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/procedures', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/procedures/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/procedures/${id}`, { method: 'DELETE' }),
+
+  /** Procedures performed on patients (report / register) */
+  getPerformedReport: (params?: {
+    patientId?: string;
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    hasOutcomeOnly?: boolean;
+    page?: number;
+    limit?: number;
+  }) => {
+    const p = new URLSearchParams();
+    if (params?.patientId) p.append('patientId', params.patientId);
+    if (params?.search) p.append('search', params.search);
+    if (params?.dateFrom) p.append('dateFrom', params.dateFrom);
+    if (params?.dateTo) p.append('dateTo', params.dateTo);
+    if (params?.hasOutcomeOnly) p.append('hasOutcomeOnly', 'true');
+    if (params?.page) p.append('page', String(params.page));
+    if (params?.limit) p.append('limit', String(params.limit));
+    const q = p.toString();
+    return apiRequest<any[]>(`/api/procedures/reports/performed${q ? `?${q}` : ''}`);
+  },
+
+  // Patient procedures
+  getPatientProcedures: (patientId: string, date?: string, procedureId?: string) => {
+    const params = new URLSearchParams();
+    if (date) params.append('date', date);
+    if (procedureId) params.append('procedureId', procedureId);
+    const queryString = params.toString();
+    return apiRequest<any[]>(`/api/procedures/patient/${patientId}${queryString ? `?${queryString}` : ''}`);
+  },
+
+  createPatientProcedure: (data: any) =>
+    apiRequest<any>('/api/procedures/patient', { method: 'POST', body: data }),
+
+  updatePatientProcedure: (id: string, data: any) =>
+    apiRequest<any>(`/api/procedures/patient/${id}`, { method: 'PUT', body: data }),
+
+  deletePatientProcedure: (id: string) =>
+    apiRequest<any>(`/api/procedures/patient/${id}`, { method: 'DELETE' }),
+};
+
+// Ambulance API
+export const ambulanceApi = {
+  getAll: (status?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/ambulance?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/ambulance/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/ambulance', { method: 'POST', body: data }),
+
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/ambulance/${id}`, { method: 'PUT', body: data }),
+
+  delete: (id: string) =>
+    apiRequest<any>(`/api/ambulance/${id}`, { method: 'DELETE' }),
+
+  // Trips
+  getTrips: (status?: string, tripType?: string, search?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+    if (status) params.append('status', status);
+    if (tripType) params.append('tripType', tripType);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/ambulance/trips/all?${params.toString()}`);
+  },
+
+  getTrip: (id: string) =>
+    apiRequest<any>(`/api/ambulance/trips/${id}`),
+
+  createTrip: (data: any) =>
+    apiRequest<any>('/api/ambulance/trips', { method: 'POST', body: data }),
+
+  updateTrip: (id: string, data: any) =>
+    apiRequest<any>(`/api/ambulance/trips/${id}`, { method: 'PUT', body: data }),
+
+  deleteTrip: (id: string) =>
+    apiRequest<any>(`/api/ambulance/trips/${id}`, { method: 'DELETE' }),
+};
+
+export const auditApi = {
+  getLogs: (params?: {
+    limit?: number
+    patientId?: number
+    userId?: number
+    resourceType?: string
+    action?: string
+  }) => {
+    const q = new URLSearchParams()
+    if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.patientId) q.set('patientId', String(params.patientId))
+    if (params?.userId) q.set('userId', String(params.userId))
+    if (params?.resourceType) q.set('resourceType', params.resourceType)
+    if (params?.action) q.set('action', params.action)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return apiRequest<any[]>(`/api/audit/logs${suffix}`)
+  },
+
+  getOutbox: (params?: { limit?: number; status?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.status) q.set('status', params.status)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return apiRequest<any>(`/api/audit/outbox${suffix}`)
+  },
+
+  exportCsv: (params?: { limit?: number; patientId?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.patientId) q.set('patientId', String(params.patientId))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return `/api/audit/logs/export.csv${suffix}`
+  },
+}
+
+export const evidenceApi = {
+  getSandboxSmoke: () =>
+    apiRequest<{
+      passed: boolean
+      passedCount: number
+      totalChecks: number
+      checks: { id: string; label: string; ready: boolean; detail?: string }[]
+      generatedAt: string
+    }>('/api/integrations/evidence/sandbox-smoke'),
+
+  getHieSmokeLogs: (limit = 20) =>
+    apiRequest<{ logs: any[] }>(`/api/integrations/evidence/hie-smoke-log?limit=${limit}`),
+
+  recordHieSmoke: (data: {
+    passed: boolean
+    notes?: string
+    testLabel?: string
+    stepsPerformed?: string
+  }) =>
+    apiRequest<{ logId: number; evidenceSummary?: string }>('/api/integrations/evidence/hie-smoke-log', {
+      method: 'POST',
+      body: data,
+    }),
+
+  getAttestationProductMatrix: () =>
+    apiRequest<any>('/api/integrations/evidence/attestation-product-matrix'),
+}
+
+export const securityApi = {
+  breakGlass: (data: {
+    patientId: number
+    reason: string
+    password: string
+    authorizerNote?: string
+  }) => apiRequest<{ logId: number; validUntil: string; message: string }>('/api/security/break-glass', {
+    method: 'POST',
+    body: data,
+  }),
+
+  getBreakGlassLogs: (params?: { patientId?: number; limit?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.patientId) q.set('patientId', String(params.patientId))
+    if (params?.limit) q.set('limit', String(params.limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return apiRequest<{ logs: any[] }>(`/api/security/break-glass/logs${suffix}`)
+  },
+}
+
+export const integrationsApi = {
+  getFhirComposition: (patientId: string) =>
+    apiRequest<any>(`/api/integrations/fhir/composition/${patientId}`),
+
+  exportIdsrWeekly: (referenceDate?: string) =>
+    apiRequest<any>('/api/integrations/idsr/weekly-export', {
+      method: 'POST',
+      body: referenceDate ? { referenceDate } : {},
+    }),
+
+  getIdsrWeeklyReports: (limit = 12) =>
+    apiRequest<{ reports: any[] }>(`/api/integrations/idsr/weekly-reports?limit=${limit}`),
+
+  getIdsrAlerts: (params?: { limit?: number; status?: string; patientId?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.status) q.set('status', params.status)
+    if (params?.patientId) q.set('patientId', String(params.patientId))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return apiRequest<{ alerts: any[]; byStatus?: Record<string, number> }>(
+      `/api/integrations/idsr/alerts${suffix}`
+    )
+  },
+
+  acknowledgeIdsrAlert: (alertId: number) =>
+    apiRequest<any>(`/api/integrations/idsr/alerts/${alertId}/acknowledge`, { method: 'PATCH' }),
+
+  evaluateIdsr: (data: {
+    text?: string
+    diagnosis?: string
+    patientId?: number
+    sourceType?: string
+    sourceId?: string
+    summary?: string
+  }) => apiRequest<any>('/api/integrations/idsr/evaluate', { method: 'POST', body: data }),
+}
+
+export const clinicalCdsApi = {
+  evaluate: (data: {
+    patientId?: number
+    medicationNames?: string[]
+    clinicalText?: string | null
+  }) => apiRequest<any>('/api/clinical/cds/evaluate', { method: 'POST', body: data }),
+}
+
+export const standardsApi = {
+  validateKenhddPatient: (patientId: string | number) =>
+    apiRequest<{
+      overallScore: number
+      demographics?: { score: number }
+      attestationHint?: string
+    }>(`/api/integrations/kenhdd/validate/patient/${patientId}`),
+}
+
+export const hptApi = {
+  search: (q: string, limit = 20) =>
+    apiRequest<{ mode: string; results: any[] }>(
+      `/api/integrations/hpt/search?${new URLSearchParams({ q, limit: String(limit) })}`
+    ),
+  mapMedication: (medicationId: string, hptCode: string) =>
+    apiRequest<any>(`/api/integrations/hpt/map-medication/${medicationId}`, {
+      method: 'PUT',
+      body: { hptCode },
+    }),
+}
+
+export const ihrApi = {
+  getCatalog: () => apiRequest<{ events: any[] }>('/api/integrations/ihr/catalog'),
+  getLinks: (limit = 20) =>
+    apiRequest<{ links: any[] }>(`/api/integrations/ihr/links?limit=${limit}`),
+  linkAlert: (data: { idsrAlertId: number; eventCode: string; notes?: string }) =>
+    apiRequest<any>('/api/integrations/ihr/link-alert', { method: 'POST', body: data }),
+  getDeclarations: (limit = 25) =>
+    apiRequest<{ declarations: any[] }>(`/api/integrations/ihr/declarations?limit=${limit}`),
+  declareEvent: (data: {
+    eventCode: string
+    idsrAlertId?: number
+    title?: string
+    summary?: string
+  }) => apiRequest<any>('/api/integrations/ihr/declare-event', { method: 'POST', body: data }),
+}
+
+export const cqmApi = {
+  getSummary: (params?: { startDate?: string; endDate?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.startDate) q.set('startDate', params.startDate)
+    if (params?.endDate) q.set('endDate', params.endDate)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return apiRequest<any>(`/api/reporting/cqm/summary${suffix}`)
+  },
+  exportCsvUrl: (params?: { startDate?: string; endDate?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.startDate) q.set('startDate', params.startDate)
+    if (params?.endDate) q.set('endDate', params.endDate)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    const base = typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_API_URL || ''
+    return `${base}/api/reporting/cqm/export.csv${suffix}`
+  },
+  exportJsonUrl: (params?: { startDate?: string; endDate?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.startDate) q.set('startDate', params.startDate)
+    if (params?.endDate) q.set('endDate', params.endDate)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    const base = typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_API_URL || ''
+    return `${base}/api/reporting/cqm/export.json${suffix}`
+  },
+  createSubmission: (data: { startDate?: string; endDate?: string; notes?: string }) =>
+    apiRequest<any>('/api/reporting/cqm/submissions', { method: 'POST', body: data }),
+  listSubmissions: (limit = 15) =>
+    apiRequest<{ submissions: any[] }>(`/api/reporting/cqm/submissions?limit=${limit}`),
+  submissionDownloadUrl: (submissionId: number) => {
+    const base = typeof window !== 'undefined' ? '' : process.env.NEXT_PUBLIC_API_URL || ''
+    return `${base}/api/reporting/cqm/submissions/${submissionId}/download.json`
+  },
+}
+
+export const emergencyApi = {
+  intake: (data: any) =>
+    apiRequest<any>('/api/emergency/intake', { method: 'POST', body: data }),
+
+  listEncounters: (status = 'active', limit = 50) => {
+    const params = new URLSearchParams({ status, limit: String(limit) });
+    return apiRequest<any[]>(`/api/emergency/encounters?${params.toString()}`);
+  },
+
+  completeRegistration: (id: string | number) =>
+    apiRequest<any>(`/api/emergency/encounters/${id}/complete-registration`, { method: 'PUT' }),
+
+  updateStatus: (id: string | number, status: string) =>
+    apiRequest<any>(`/api/emergency/encounters/${id}/status`, { method: 'PUT', body: { status } }),
+};
+
+export const nbtmsApi = {
+  listDonors: (search?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    const q = params.toString();
+    return apiRequest<any[]>(`/api/nbtms/donors${q ? `?${q}` : ''}`);
+  },
+  createDonor: (data: Record<string, unknown>) =>
+    apiRequest<any>('/api/nbtms/donors', { method: 'POST', body: data }),
+  listDeferrals: (active?: boolean) => {
+    const params = new URLSearchParams();
+    if (active) params.append('active', '1');
+    return apiRequest<any[]>(`/api/nbtms/deferrals?${params.toString()}`);
+  },
+  createDeferral: (data: Record<string, unknown>) =>
+    apiRequest<any>('/api/nbtms/deferrals', { method: 'POST', body: data }),
+  listDonations: () => apiRequest<any[]>('/api/nbtms/donations'),
+  createDonation: (data: Record<string, unknown>) =>
+    apiRequest<any>('/api/nbtms/donations', { method: 'POST', body: data }),
+  listUnits: (filters?: { status?: string; bloodGroup?: string; componentType?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.bloodGroup) params.append('bloodGroup', filters.bloodGroup);
+    if (filters?.componentType) params.append('componentType', filters.componentType);
+    const q = params.toString();
+    return apiRequest<any[]>(`/api/nbtms/units${q ? `?${q}` : ''}`);
+  },
+  stockSummary: () => apiRequest<any>('/api/nbtms/stock/summary'),
+  listRequests: () => apiRequest<any[]>('/api/nbtms/requests'),
+  createRequest: (data: Record<string, unknown>) =>
+    apiRequest<any>('/api/nbtms/requests', { method: 'POST', body: data }),
+  crossMatch: (requestId: string | number, data: { unitId: number; result?: string; notes?: string }) =>
+    apiRequest<any>(`/api/nbtms/requests/${requestId}/cross-match`, { method: 'POST', body: data }),
+  issueUnit: (requestId: string | number, unitId: number) =>
+    apiRequest<any>(`/api/nbtms/requests/${requestId}/issue`, { method: 'POST', body: { unitId } }),
+  listHemovigilance: () => apiRequest<any[]>('/api/nbtms/hemovigilance'),
+  reportHemovigilance: (data: Record<string, unknown>) =>
+    apiRequest<any>('/api/nbtms/hemovigilance', { method: 'POST', body: data }),
+};
+
+export const mortuaryApi = {
+  listCases: (filters?: { status?: string; search?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.search) params.append('search', filters.search);
+    if (filters?.limit) params.append('limit', String(filters.limit));
+    return apiRequest<any[]>(`/api/mortuary/cases?${params.toString()}`);
+  },
+
+  getCase: (id: string | number) =>
+    apiRequest<any>(`/api/mortuary/cases/${id}`),
+
+  createCase: (data: any) =>
+    apiRequest<any>('/api/mortuary/cases', { method: 'POST', body: data }),
+
+  updateCase: (id: string | number, data: any) =>
+    apiRequest<any>(`/api/mortuary/cases/${id}`, { method: 'PUT', body: data }),
+};
+
+// Bill Waiver API
+export const waiverApi = {
+  // Waiver Types
+  getWaiverTypes: (isActive?: boolean, responsibility?: string) => {
+    const params = new URLSearchParams();
+    if (isActive !== undefined) params.append('isActive', isActive.toString());
+    if (responsibility) params.append('responsibility', responsibility);
+    return apiRequest<any[]>(`/api/waivers/types?${params.toString()}`);
+  },
+
+  getWaiverType: (id: string) =>
+    apiRequest<any>(`/api/waivers/types/${id}`),
+
+  createWaiverType: (data: any) =>
+    apiRequest<any>('/api/waivers/types', { method: 'POST', body: data }),
+
+  updateWaiverType: (id: string, data: any) =>
+    apiRequest<any>(`/api/waivers/types/${id}`, { method: 'PUT', body: data }),
+
+  // Waivers
+  getAll: (status?: string, responsibility?: string, waiverTypeId?: string, patientId?: string, invoiceId?: string, search?: string, page = 1, limit = 50) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+    if (status) params.append('status', status);
+    if (responsibility) params.append('responsibility', responsibility);
+    if (waiverTypeId) params.append('waiverTypeId', waiverTypeId);
+    if (patientId) params.append('patientId', patientId);
+    if (invoiceId) params.append('invoiceId', invoiceId);
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/waivers?${params.toString()}`);
+  },
+
+  getById: (id: string) =>
+    apiRequest<any>(`/api/waivers/${id}`),
+
+  create: (data: any) =>
+    apiRequest<any>('/api/waivers', { method: 'POST', body: data }),
+
+  approve: (id: string, data: { approvedBy: string; notes?: string }) =>
+    apiRequest<any>(`/api/waivers/${id}/approve`, { method: 'PUT', body: data }),
+
+  reject: (id: string, data: { rejectedBy: string; rejectionReason: string }) =>
+    apiRequest<any>(`/api/waivers/${id}/reject`, { method: 'PUT', body: data }),
+
+  recordStaffPayment: (id: string, data: any) =>
+    apiRequest<any>(`/api/waivers/${id}/staff-payment`, { method: 'POST', body: data }),
+
+  getStats: (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest<any>(`/api/waivers/stats/summary?${params.toString()}`);
+  },
+
+  getPatientsWithOutstandingBills: (search?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/waivers/patients/outstanding?${params.toString()}`);
+  },
+
+  getStaffForWaiver: (search?: string) => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/waivers/staff?${params.toString()}`);
+  },
+};
+
+// MOH Reports API
+export const mohReportsApi = {
+  getCatalog: () => apiRequest<{ reports: any[]; source: string }>(`/api/moh-reports`),
+
+  getByCode: (code: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams()
+    if (startDate) params.set("startDate", startDate)
+    if (endDate) params.set("endDate", endDate)
+    const qs = params.toString()
+    return apiRequest<any>(`/api/moh-reports/${encodeURIComponent(code)}${qs ? `?${qs}` : ""}`)
+  },
+
+  get717: (startDate: string, endDate: string) =>
+    apiRequest<any>(`/api/moh-reports/717?startDate=${startDate}&endDate=${endDate}`),
+
+  get705: (startDate: string, endDate: string) =>
+    apiRequest<any>(`/api/moh-reports/705?startDate=${startDate}&endDate=${endDate}`),
+
+  get711: (startDate: string, endDate: string) =>
+    // Legacy immunization UI historically used "711"; official immunization is MOH 710.
+    apiRequest<any>(`/api/moh-reports/710?startDate=${startDate}&endDate=${endDate}&format=legacy`),
+
+  get708: (startDate: string, endDate: string) =>
+    apiRequest<any>(`/api/moh-reports/708?startDate=${startDate}&endDate=${endDate}`),
+
+  get731Plus: (startDate: string, endDate: string) =>
+    apiRequest<any>(`/api/moh-reports/731-plus?startDate=${startDate}&endDate=${endDate}`),
+
+  get730: () => apiRequest<any>(`/api/moh-reports/730`),
+
+  getExports: (limit = 15) =>
+    apiRequest<{ exports: any[] }>(`/api/moh-reports/exports?limit=${limit}`),
+};
+
+// User API
+export const userApi = {
+  getAll: (search?: string, page = 1, limit = 100) => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+    if (search) params.append('search', search);
+    return apiRequest<any[]>(`/api/users?${params.toString()}`);
+  },
+  getById: (id: string) =>
+    apiRequest<any>(`/api/users/${id}`),
+  create: (data: any) =>
+    apiRequest<any>('/api/users', { method: 'POST', body: data }),
+  update: (id: string, data: any) =>
+    apiRequest<any>(`/api/users/${id}`, { method: 'PUT', body: data }),
+  delete: (id: string) =>
+    apiRequest<any>(`/api/users/${id}`, { method: 'DELETE' }),
+  changePassword: (id: string, data: { currentPassword: string; newPassword: string }) =>
+    apiRequest<any>(`/api/users/${id}/password`, { method: 'PUT', body: data }),
+};
+
+// Nursing API
+export const nursingApi = {
+  getAssignedWards: () =>
+    apiRequest<any[]>('/api/nursing/wards/assigned'),
+
+  getNurseAssignments: (nurseUserId: number) =>
+    apiRequest<any[]>(`/api/nursing/wards/nurse/${nurseUserId}`),
+
+  assignWards: (nurseUserId: number, wardIds: number[]) =>
+    apiRequest<any>('/api/nursing/wards/assign', { method: 'POST', body: { nurseUserId, wardIds } }),
+
+  /** List nurses (users with nurse-related roles) for dropdowns */
+  getNurses: () =>
+    apiRequest<any[]>('/api/nursing/nurses'),
+
+  /** Get shift schedule: { morning, evening, night } arrays of staff with ward info */
+  getShiftSchedule: () =>
+    apiRequest<{ morning: any[]; evening: any[]; night: any[] }>('/api/nursing/shift-schedule'),
+
+  /** Assign a nurse to a shift (morning | evening | night). One shift per nurse. */
+  assignNurseShift: (nurseUserId: number, shiftType: 'morning' | 'evening' | 'night') =>
+    apiRequest<any>('/api/nursing/shift-schedule/assign', { method: 'POST', body: { nurseUserId, shiftType } }),
+
+  getReadyPickupRequests: () =>
+    apiRequest<any[]>('/api/nursing/pickup-requests/ready'),
+
+  getMyPickupRequests: () =>
+    apiRequest<any[]>('/api/nursing/pickup-requests'),
+
+  createPickupRequest: (data: any) =>
+    apiRequest<any>('/api/nursing/pickup-requests', { method: 'POST', body: data }),
+
+  /** Nurse cancels their own pickup request (only pending or ready_for_pickup). */
+  cancelPickupRequest: (pickupId: string) =>
+    apiRequest<{ message: string; pickupId: string; status: string }>(
+      `/api/nursing/pickup-requests/${pickupId}/cancel`,
+      { method: 'POST' }
+    ),
+};
+
+/** Field / surveillance datasets (IntelliNex Field mobile companion). */
+export const dataCollectionApi = {
+  listTemplates: (params?: { category?: string; includeInactive?: boolean }) => {
+    const search = new URLSearchParams()
+    if (params?.category) search.set('category', params.category)
+    if (params?.includeInactive) search.set('includeInactive', '1')
+    const q = search.toString()
+    return apiRequest<any[]>(`/api/data-collection/templates${q ? `?${q}` : ''}`)
+  },
+  getTemplate: (id: number | string) =>
+    apiRequest<any>(`/api/data-collection/templates/${id}`),
+  createTemplate: (data: any) =>
+    apiRequest<any>('/api/data-collection/templates', { method: 'POST', body: data }),
+  updateTemplate: (id: number | string, data: any) =>
+    apiRequest<any>(`/api/data-collection/templates/${id}`, { method: 'PATCH', body: data }),
+  deleteTemplate: (id: number | string) =>
+    apiRequest<{ ok: boolean }>(`/api/data-collection/templates/${id}`, { method: 'DELETE' }),
+  listSubmissions: (params?: { templateId?: number; mine?: boolean; limit?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.templateId) search.set('templateId', String(params.templateId))
+    if (params?.mine) search.set('mine', '1')
+    if (params?.limit) search.set('limit', String(params.limit))
+    const q = search.toString()
+    return apiRequest<any[]>(`/api/data-collection/submissions${q ? `?${q}` : ''}`)
+  },
+  createSubmission: (data: any) =>
+    apiRequest<any>('/api/data-collection/submissions', { method: 'POST', body: data }),
+};
+
+/** IntelliNex Field Android APK release / download. */
+export const mobileAppApi = {
+  getRelease: () =>
+    apiRequest<{ available: boolean; release: any | null; isNewForUser?: boolean }>(
+      '/api/mobile-app/release'
+    ),
+  getUsageReport: () =>
+    apiRequest<{
+      currentRelease: any | null
+      summary: Record<string, number>
+      versionBreakdown: any[]
+      users: any[]
+      recentEvents: any[]
+    }>('/api/mobile-app/usage'),
+  dismissRelease: () =>
+    apiRequest<{ ok: boolean; dismissed: boolean }>('/api/mobile-app/release/dismiss', {
+      method: 'POST',
+      body: {},
+    }),
+  /** Build authenticated download URL for browser <a download>. */
+  getDownloadHref: () => {
+    if (typeof window === 'undefined') return '/api/mobile-app/download'
+    const token =
+      localStorage.getItem('token') ||
+      localStorage.getItem('jwt_token') ||
+      localStorage.getItem('auth_token') ||
+      ''
+    const base = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) || ''
+    const q = token ? `?access_token=${encodeURIComponent(token)}` : ''
+    return `${base}/api/mobile-app/download${q}`
+  },
+  uploadRelease: async (file: File, version: string, releaseNotes?: string) => {
+    const token =
+      typeof window !== 'undefined'
+        ? localStorage.getItem('token') ||
+          localStorage.getItem('jwt_token') ||
+          localStorage.getItem('auth_token')
+        : null
+    const base = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) || ''
+    const form = new FormData()
+    form.append('file', file)
+    form.append('version', version)
+    if (releaseNotes) form.append('releaseNotes', releaseNotes)
+    const res = await fetch(`${base}/api/mobile-app/upload`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: form,
+    })
+    if (!res.ok) {
+      const raw = await res.text()
+      let msg = res.statusText
+      try {
+        msg = JSON.parse(raw)?.error || msg
+      } catch {
+        if (raw) msg = raw.slice(0, 200)
+      }
+      throw new Error(msg || 'Upload failed')
+    }
+    return res.json() as Promise<{ ok: boolean; release: any }>
+  },
+};

@@ -1,0 +1,39 @@
+# Apache (cPanel) — reverse proxy for AZIMKIM HMIS subdomain
+#   https://hmis.azimkim.co.ke/hmis/
+#
+# Same VPS backends as Kakamega county deployment:
+#   UI:  http://VPS_IP:5400/hmis/...
+#   API: http://VPS_IP:3222/api/...
+#
+# 1) cPanel → Subdomains → hmis.azimkim.co.ke → document root (e.g. public_html/hmis or subdomain folder)
+# 2) Copy this file to that document root as `.htaccess`
+# 3) AutoSSL for hmis.azimkim.co.ke
+# 4) Replace VPS_IP below (e.g. 165.22.227.234)
+#
+# Keep https://kakamega.intellibizafrica.co.ke working via its existing .htaccess on intellibizafrica hosting.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  SSLProxyEngine On
+
+  <IfModule mod_headers.c>
+    RequestHeader set X-Forwarded-Proto "https" env=HTTPS
+    RequestHeader set X-Forwarded-Host "%{HTTP_HOST}e"
+  </IfModule>
+
+  RewriteRule ^api/(.*)$ http://165.22.227.234:3222/api/$1 [P,L]
+
+  # Next static export: *.txt are RSC payloads, not pages — redirect browser navigation to HTML route.
+  RewriteCond %{HTTP:RSC} !^1$ [NC]
+  RewriteRule ^hmis/(.+)\.txt$ /hmis/$1 [R=302,L]
+  RewriteCond %{HTTP:RSC} !^1$ [NC]
+  RewriteRule ^(.+)\.txt$ /$1 [R=302,L]
+
+  RewriteRule ^(.*)$ http://165.22.227.234:5400/hmis/$1 [P,L]
+</IfModule>
+
+<IfModule mod_proxy.c>
+  ProxyRequests Off
+</IfModule>

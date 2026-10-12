@@ -1,0 +1,12 @@
+[
+  { "hptCode": "HPT-AMOX-500", "name": "Amoxicillin 500mg capsule", "form": "Capsule", "strength": "500mg" },
+  { "hptCode": "HPT-METF-500", "name": "Metformin 500mg tablet", "form": "Tablet", "strength": "500mg" },
+  { "hptCode": "HPT-PARA-500", "name": "Paracetamol 500mg tablet", "form": "Tablet", "strength": "500mg" },
+  { "hptCode": "HPT-IBUP-400", "name": "Ibuprofen 400mg tablet", "form": "Tablet", "strength": "400mg" },
+  { "hptCode": "HPT-ARTE-20", "name": "Artemether-Lumefantrine 20/120mg", "form": "Tablet", "strength": "20/120mg" },
+  { "hptCode": "HPT-ORS-1L", "name": "Oral rehydration salts sachet", "form": "Sachet", "strength": "1L" },
+  { "hptCode": "HPT-COTR-960", "name": "Co-trimoxazole 960mg tablet", "form": "Tablet", "strength": "960mg" },
+  { "hptCode": "HPT-OXYT-10", "name": "Oxytocin 10 IU injection", "form": "Injection", "strength": "10IU" },
+  { "hptCode": "HPT-FERF-200", "name": "Ferrous sulphate 200mg tablet", "form": "Tablet", "strength": "200mg" },
+  { "hptCode": "HPT-SALB-100", "name": "Salbutamol 100mcg inhaler", "form": "Inhaler", "strength": "100mcg" }
+]

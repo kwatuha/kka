@@ -1,0 +1,185 @@
+# Production Deployment Configuration for Kiplombe HMIS
+# Designed to run alongside existing applications on the server
+# (Compose spec v2+ — no top-level `version` key; avoids obsolete-version warnings)
+#
+# To use an existing MySQL container on the same host (no second mysqld), use instead:
+#   docker-compose.shared-mysql.yml
+
+services:
+  # MySQL Database (optional - can use existing MySQL)
+  mysql_db:
+    image: mysql:8.0
+    container_name: kiplombe_mysql
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-kiplombe_root_pass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-kiplombe_hmis}
+      MYSQL_USER: ${MYSQL_USER:-kiplombe_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-kiplombe_pass}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "${MYSQL_PORT:-3308}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-kiplombe_root_pass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - kiplombe_network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # API Server
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.prod
+    container_name: kiplombe_api
+    restart: unless-stopped
+    expose:
+      - "3001"
+    ports:
+      - "3001:3001"
+    volumes:
+      - api_uploads:/app/uploads
+    depends_on:
+      mysql_db:
+        condition: service_healthy
+    # Load secrets (JWT, Zoom Meeting SDK, DB_*, etc.). Use project root `.env` next to this compose file,
+    # or add another line: `- /path/on/server/.env` — Docker merges multiple env_file entries.
+    # The API also reads `api/.env` and repo root `.env` at runtime via `api/config/load-env.js` when not set in the container.
+    # Force one file: set `API_ENV_FILE` in the container or on the host before compose.
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DB_HOST: ${DB_HOST:-mysql_db}
+      DB_USER: ${MYSQL_USER:-kiplombe_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-kiplombe_pass}
+      DB_NAME: ${MYSQL_DATABASE:-kiplombe_hmis}
+      DB_PORT: ${DB_PORT:-3306}
+      JWT_SECRET: ${JWT_SECRET:-change_this_jwt_secret_in_production}
+      PORT: 3001
+      # API_BASE_URL is for internal API-to-API communication
+      API_BASE_URL: ${API_BASE_URL:-http://kiplombe_api:3001}
+      # NEXT_PUBLIC_API_URL is for frontend (browser) API calls
+      # If not set, frontend will use relative URLs through nginx
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      # FRONTEND_URL for CORS - allows the production domain
+      FRONTEND_URL: ${FRONTEND_URL:-http://41.89.173.8}
+    networks:
+      - kiplombe_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Frontend — static export baked at image build (Dockerfile.prod); container runs `serve` only.
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-}
+    container_name: kiplombe_frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    # Same `.env` as API so NEXT_PUBLIC_* and other vars are available (Compose also interpolates ${VAR} from .env).
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      # Base URL for QR codes and absolute links (e.g., http://41.89.173.8 or https://yourdomain.com)
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-}
+      HOSTNAME: "0.0.0.0"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - kiplombe_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/hmis/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: kiplombe_nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      # ACME HTTP-01 + optional TLS snippets (see deploy/setup-https.sh, deploy/HTTPS.md)
+      - ./deploy/certbot/www:/var/www/certbot
+      - ./deploy/nginx-https.conf:/etc/nginx/snippets/kiplombe-https.conf:ro
+      - ./deploy/nginx-http-redirect.conf:/etc/nginx/snippets/kiplombe-http-redirect.conf:ro
+      # Self-signed certs from deploy/setup-https-selfsigned.sh (fullchain.pem + privkey.pem)
+      - ./deploy/ssl:/etc/nginx/ssl:ro
+      # Optional: Let’s Encrypt when you have a domain (deploy/setup-https.sh). Safe if empty.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - nginx_cache:/var/cache/nginx
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - kiplombe_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s  # Wait for frontend to be ready before marking nginx as healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+networks:
+  kiplombe_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
+  api_uploads:
+    driver: local
+  nginx_cache:
+    driver: local
+  nginx_logs:
+    driver: local
+
+

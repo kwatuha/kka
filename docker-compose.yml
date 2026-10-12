@@ -1,0 +1,98 @@
+# Kakamega County HMIS — local full stack (bundled MySQL).
+# Ports chosen to avoid clashes with IntelliNex (3100/3101), telemed (3011/3112), and Baringo (3122/5382/8286).
+#
+#   docker compose --env-file .env up -d
+#   ./deploy/setup-kakamega-db-local.sh   # schema + migrations + Kakamega seed
+#
+#   UI (AZ CarePlus): http://localhost:5400/hmis/login   ← not :3100 (generic IntelliNex dev)
+#   API:              http://localhost:3222
+
+services:
+  mysql_db:
+    image: mysql:8.0
+    container_name: kakamega_mysql
+    restart: always
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-kakamega_root_pass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-kakamega_hmis_db}
+      MYSQL_USER: ${MYSQL_USER:-kakamega_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-kakamega_password}
+    volumes:
+      - db_data:/var/lib/mysql
+    ports:
+      - "${MYSQL_PORT:-3330}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./api
+    container_name: kakamega_api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3222}:3001"
+    volumes:
+      - ./api:/app
+      - api_node_modules:/app/node_modules
+    depends_on:
+      mysql_db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      DB_HOST: mysql_db
+      DB_USER: ${MYSQL_USER:-kakamega_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-kakamega_password}
+      DB_NAME: ${MYSQL_DATABASE:-kakamega_hmis_db}
+      DB_PORT: 3306
+      PORT: 3001
+      APP_NAME: ${APP_NAME:-AZ CarePlus}
+      FRONTEND_URL: http://localhost:${HMIS_FRONTEND_PORT:-5400}
+    command: sh -c "if [ ! -d node_modules ] || [ -z \"$(ls -A node_modules)\" ]; then npm install; fi && npx nodemon app.js"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kakamega_frontend
+    restart: unless-stopped
+    ports:
+      - "${HMIS_FRONTEND_PORT:-5400}:3000"
+    volumes:
+      - .:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_BASE_URL: http://localhost:${HMIS_FRONTEND_PORT:-5400}/hmis
+      NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-3222}
+      NEXT_PUBLIC_PRODUCT_NAME: ${NEXT_PUBLIC_PRODUCT_NAME:-AZ CarePlus}
+      NEXT_PUBLIC_APP_BRAND: ${NEXT_PUBLIC_APP_BRAND:-AZ CarePlus}
+      HOSTNAME: "0.0.0.0"
+      PORT: 3000
+      NODE_OPTIONS: "--max-old-space-size=4096"
+      SKIP_INSTALL: "false"
+      NEXT_TELEMETRY_DISABLED: "1"
+      WATCHPACK_POLLING: "false"
+      HOME: /tmp
+      NPM_CONFIG_CACHE: /tmp/.npm
+    # Match host UID/GID so bind-mounted source is writable (avoids EACCES on next-env.d.ts)
+    user: "${UID:-1000}:${GID:-1000}"
+    # Skip gosu wrapper — it fails when compose runs the container as a non-root user
+    entrypoint: ["/usr/local/bin/docker-entrypoint-frontend.sh"]
+    command: ["npx", "next", "dev", "--turbo", "-H", "0.0.0.0", "-p", "3000"]
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+volumes:
+  db_data:
+  api_node_modules:
+  frontend_node_modules:
+  frontend_next:

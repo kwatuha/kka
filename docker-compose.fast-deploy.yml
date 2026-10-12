@@ -1,0 +1,187 @@
+# Fast Deployment Configuration - Uses volume mounts for code updates
+# This avoids rebuilding the container for code changes
+# Use this for quick deployments after code changes
+
+version: '3.8'
+
+services:
+  # MySQL Database (same as deploy)
+  mysql_db:
+    image: mysql:8.0
+    container_name: kiplombe_mysql
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-kiplombe_root_pass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-kiplombe_hmis}
+      MYSQL_USER: ${MYSQL_USER:-kiplombe_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-kiplombe_pass}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "${MYSQL_PORT:-3308}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-kiplombe_root_pass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - kiplombe_network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # API Server (with volume mount for fast updates)
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.prod
+    container_name: kiplombe_api
+    restart: unless-stopped
+    expose:
+      - "3001"
+    ports:
+      - "3001:3001"
+    volumes:
+      - api_uploads:/app/uploads
+      # Mount source code for fast updates (optional - uncomment if needed)
+      # - ./api:/app:ro
+    depends_on:
+      mysql_db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DB_HOST: ${DB_HOST:-mysql_db}
+      DB_USER: ${MYSQL_USER:-kiplombe_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-kiplombe_pass}
+      DB_NAME: ${MYSQL_DATABASE:-kiplombe_hmis}
+      DB_PORT: ${DB_PORT:-3306}
+      JWT_SECRET: ${JWT_SECRET:-change_this_jwt_secret_in_production}
+      PORT: 3001
+      API_BASE_URL: ${API_BASE_URL:-http://kiplombe_api:3001}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      FRONTEND_URL: ${FRONTEND_URL:-http://41.89.173.8}
+    networks:
+      - kiplombe_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # Frontend (Next.js) - Fast Deploy with Volume Mounts
+  # Code changes are reflected immediately without rebuild
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod.runtime
+    container_name: kiplombe_frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    volumes:
+      # Mount source code - changes are reflected immediately
+      - ./app:/app/app:ro
+      - ./components:/app/components:ro
+      - ./lib:/app/lib:ro
+      - ./public:/app/public:ro
+      - ./styles:/app/styles:ro
+      - ./hooks:/app/hooks:ro
+      - ./scripts:/app/scripts:ro
+      # Persist node_modules (don't overwrite with volume)
+      - frontend_node_modules:/app/node_modules
+      # Persist .next build cache for faster rebuilds
+      - frontend_next_build:/app/.next
+      # Persist package files
+      - ./package.json:/app/package.json:ro
+      - ./package-lock.json:/app/package-lock.json:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - ./next.config.mjs:/app/next.config.mjs:ro
+      - ./tailwind.config.ts:/app/tailwind.config.ts:ro
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=4096"
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      HOSTNAME: "0.0.0.0"
+      # Enable fast rebuild mode
+      FAST_DEPLOY: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - kiplombe_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+    deploy:
+      resources:
+        limits:
+          memory: 5G
+        reservations:
+          memory: 1G
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: kiplombe_nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_cache:/var/cache/nginx
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - api
+    networks:
+      - kiplombe_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+networks:
+  kiplombe_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
+  api_uploads:
+    driver: local
+  nginx_cache:
+    driver: local
+  nginx_logs:
+    driver: local
+  frontend_node_modules:
+    driver: local
+  frontend_next_build:
+    driver: local
+
+
+
+
+

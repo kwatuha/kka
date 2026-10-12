@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 88" role="img" aria-label="AZ CarePlus Hospital MIS">
+  <defs>
+    <linearGradient id="azcp-icon" x1="8%" y1="0%" x2="92%" y2="100%">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="42%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0f4c75"/>
+    </linearGradient>
+    <linearGradient id="azcp-shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(12 12)">
+    <rect x="0" y="0" width="64" height="64" rx="20" fill="url(#azcp-icon)"/>
+    <rect x="0" y="0" width="64" height="32" rx="20" fill="url(#azcp-shine)"/>
+    <rect x="0" y="0" width="64" height="64" rx="20" fill="none" stroke="rgba(15,76,117,0.15)" stroke-width="1.5"/>
+    <path d="M32 19v26M19 32h26" stroke="#ffffff" stroke-width="4.75" stroke-linecap="round"/>
+  </g>
+  <text x="92" y="38" fill="#0f4c75" font-family="system-ui,Segoe UI,Roboto,sans-serif" font-size="22" font-weight="700">
+    <tspan>AZ </tspan><tspan fill="#2596be">Care</tspan><tspan font-weight="800">Plus</tspan>
+  </text>
+  <line x1="92" y1="48" x2="114" y2="48" stroke="rgba(37,150,190,0.45)" stroke-width="1"/>
+  <text x="120" y="48" fill="#64748b" font-family="system-ui,Segoe UI,Roboto,sans-serif" font-size="10" font-weight="600" letter-spacing="0.18em">HOSPITAL MIS</text>
+</svg>

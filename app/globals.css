@@ -1,0 +1,292 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root,
+  .light {
+    /* Neutral light — fallback when no theme class is applied */
+    --background: 210 30% 97%;
+    --foreground: 224 71% 4%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 71% 4%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71% 4%;
+
+    --primary: 215 100% 14%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 20% 93%;
+    --secondary-foreground: 215 70% 15%;
+
+    --muted: 210 20% 93%;
+    --muted-foreground: 215 25% 35%;
+
+    --accent: 215 60% 45%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 32% 91%;
+    --input: 214.3 32% 91%;
+    --ring: 215 100% 14%;
+
+    --radius: 0.5rem;
+
+    --chart-1: 201 77% 38%;
+    --chart-2: 205 70% 52%;
+    --chart-3: 215 55% 32%;
+    --chart-4: 190 55% 45%;
+    --chart-5: 230 45% 55%;
+
+    --sidebar-background: 201 77% 26%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 201 77% 26%;
+    --sidebar-accent: 201 77% 20%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 201 77% 22%;
+    --sidebar-ring: 205 85% 55%;
+  }
+
+  /* Default app theme — light, professional blue surfaces */
+  .professional-blue {
+    --background: 214 38% 96%;
+    --foreground: 215 45% 14%;
+
+    --card: 210 40% 99%;
+    --card-foreground: 215 45% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 45% 14%;
+
+    --primary: 201 77% 26%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 92%;
+    --secondary-foreground: 215 50% 22%;
+
+    --muted: 210 35% 93%;
+    --muted-foreground: 215 22% 38%;
+
+    --accent: 205 85% 42%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214 28% 84%;
+    --input: 214 28% 86%;
+    --ring: 205 85% 42%;
+
+    --radius: 0.5rem;
+
+    --chart-1: 201 77% 38%;
+    --chart-2: 205 72% 48%;
+    --chart-3: 215 58% 35%;
+    --chart-4: 192 62% 42%;
+    --chart-5: 228 52% 58%;
+
+    --sidebar-background: 206 68% 24%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 205 90% 62%;
+    --sidebar-primary-foreground: 215 45% 12%;
+    --sidebar-accent: 206 62% 18%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 206 55% 20%;
+    --sidebar-ring: 205 85% 55%;
+  }
+
+  .dark {
+    /* Dark mode - premium professional palette */
+    --background: 215 35% 10%; /* Rich deep blue-gray background */
+    --foreground: 0 0% 98%;
+
+    --card: 215 30% 15%; /* Slightly elevated cards */
+    --card-foreground: 0 0% 98%;
+
+    --popover: 215 30% 15%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 0 0% 98%;
+    --primary-foreground: 215 100% 14%;
+
+    --secondary: 215 30% 18%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 215 30% 18%;
+    --muted-foreground: 215 20% 75%;
+
+    --accent: 215 60% 45%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 215 30% 20%;
+    --input: 215 30% 20%;
+    --ring: 215 20% 75%;
+
+    --chart-1: 205 70% 55%;
+    --chart-2: 190 55% 48%;
+    --chart-3: 215 45% 65%;
+    --chart-4: 230 50% 60%;
+    --chart-5: 175 45% 50%;
+
+    --sidebar-background: 201 77% 26%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 98%;
+    --sidebar-primary-foreground: 201 77% 26%;
+    --sidebar-accent: 201 77% 20%; /* Darker shade for accent */
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 201 77% 22%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+}
+
+/* Premium design enhancements */
+@layer components {
+  .premium-card {
+    @apply bg-gradient-to-b from-card to-card/95 backdrop-blur-sm;
+  }
+
+  .professional-blue .premium-card {
+    @apply shadow-md shadow-primary/5 ring-1 ring-border/60;
+  }
+
+  .professional-blue .sidebar-surface {
+    background-color: hsl(var(--sidebar-background));
+    background-image: linear-gradient(
+      175deg,
+      hsl(206 68% 30%) 0%,
+      hsl(var(--sidebar-background)) 42%,
+      hsl(206 62% 15%) 100%
+    );
+  }
+
+  .professional-blue .app-chrome-header {
+    @apply border-primary/10;
+  }
+
+  .professional-blue .app-chrome-nav {
+    @apply border-primary/10 bg-background/90;
+  }
+
+  /* Light workspace chrome: keep nav labels readable (avoid “ghost white” on pale bars). */
+  .professional-blue .app-chrome-nav button,
+  .professional-blue .app-chrome-nav a {
+    --tw-text-opacity: 1;
+  }
+
+  .professional-blue .app-chrome-nav .text-muted-foreground {
+    color: hsl(var(--foreground) / 0.78);
+  }
+
+  .professional-blue main .rounded-md.border.text-card-foreground {
+    box-shadow:
+      0 1px 2px hsl(201 77% 26% / 0.04),
+      0 6px 16px hsl(214 38% 40% / 0.07);
+  }
+
+  .professional-blue input:not([type="checkbox"]):not([type="radio"]),
+  .professional-blue textarea,
+  .professional-blue select {
+    background-color: hsl(var(--card));
+  }
+
+  .professional-blue ::selection {
+    background-color: hsl(205 85% 42% / 0.22);
+    color: hsl(var(--foreground));
+  }
+
+  .premium-container {
+    background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M11 18c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm48 25c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm-43-7c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm63 31c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM34 90c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm56-76c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM12 86c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm28-65c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm23-11c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-6 60c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm29 22c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zM32 63c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm57-13c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-9-21c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM60 91c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM35 41c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM12 60c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2z' fill='%23000000' fill-opacity='0.02' fill-rule='evenodd'/%3E%3C/svg%3E");
+    transition: background-color 0.3s ease;
+  }
+
+  .professional-blue .premium-container {
+    background-image:
+      radial-gradient(ellipse 120% 80% at 0% 0%, hsl(205 85% 42% / 0.06), transparent 55%),
+      radial-gradient(ellipse 80% 60% at 100% 0%, hsl(201 77% 26% / 0.05), transparent 50%),
+      url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M11 18c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm48 25c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm-43-7c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm63 31c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM34 90c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm56-76c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM12 86c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm28-65c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm23-11c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-6 60c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm29 22c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zM32 63c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm57-13c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-9-21c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM60 91c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM35 41c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM12 60c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2z' fill='%230f4c75' fill-opacity='0.035' fill-rule='evenodd'/%3E%3C/svg%3E");
+  }
+
+  /* Add smooth transitions for all card elements */
+  .card,
+  .card-header,
+  .card-content,
+  .card-footer,
+  .card-title,
+  .card-description {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+  }
+
+  /* Custom tab styling */
+  [role="tablist"] {
+    @apply rounded-md border border-border bg-muted/30;
+  }
+
+  [role="tab"] {
+    @apply rounded-sm text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  [role="tab"][data-state="active"] {
+    @apply bg-background text-foreground shadow-sm;
+  }
+
+  .professional-blue [role="tab"][data-state="active"] {
+    background-color: hsl(var(--card));
+    @apply text-primary shadow-sm ring-1 ring-primary/15;
+  }
+
+  [role="tab"][data-state="inactive"] {
+    @apply text-muted-foreground hover:text-foreground;
+  }
+
+  .professional-blue {
+    scrollbar-color: hsl(214 28% 72%) hsl(var(--background));
+  }
+
+  .professional-blue ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .professional-blue ::-webkit-scrollbar-thumb {
+    background: hsl(214 28% 72%);
+    border-radius: 999px;
+    border: 2px solid hsl(var(--background));
+  }
+
+  .professional-blue ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.5s ease-out forwards;
+}

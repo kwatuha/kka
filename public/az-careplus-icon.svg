@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" role="img" aria-label="AZ CarePlus">
+  <defs>
+    <linearGradient id="azcp-icon-only" x1="8%" y1="0%" x2="92%" y2="100%">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="100%" stop-color="#0f4c75"/>
+    </linearGradient>
+    <linearGradient id="azcp-icon-shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="64" height="64" rx="20" fill="url(#azcp-icon-only)"/>
+  <rect x="4" y="4" width="64" height="32" rx="20" fill="url(#azcp-icon-shine)"/>
+  <rect x="4" y="4" width="64" height="64" rx="20" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1.5"/>
+  <path d="M36 23v26M23 36h26" stroke="#ffffff" stroke-width="4.75" stroke-linecap="round"/>
+</svg>

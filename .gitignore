@@ -1,0 +1,125 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/api/node_modules
+node_modules/
+
+# next.js
+/.next/
+/out/
+out.zip
+docs/
+# Credential lists (primary copy lives under docs/, which is ignored)
+**/UAT_TEST_CREDENTIALS*
+**/*test-credentials*.xlsx
+**/*test-credentials*.csv
+**/*.credentials.xlsx
+dist/
+.tmp/
+tmp/
+website/
+deploy/apply-migration*
+deploy/apply-kenya-wards*
+deploy/generate-uat-credenti*
+api/data/Kenya_wards*
+api/database/138_kenya_wards*
+api/database/migrations/
+scripts/generate_dha*
+scripts/render*
+scripts/generate*
+scripts/convert*
+scripts/clone*
+scripts/portal_md*
+	scripts/__pycache__/
+	scripts/clone-nbtms-worktree.sh
+	scripts/convert_dha_portal_mandatory_pdf.sh
+	scripts/generate_cgiar_ai_hub_report_docx.py
+	scripts/portal_md_docx.py
+	scripts/render_portal_architecture_diagrams.py
+    scripts/convert_dha_portal_mandatory_pdf.sh
+	scripts/generate_cgiar_ai_hub_report_docx.py
+	scripts/portal_md_docx.py
+
+
+	
+
+
+
+# production
+/build
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.vscode
+/api/database/ldb/
+
+# DHA drill backups (may contain PHI — keep local / secure store only)
+docs/evidence/backups/*.sql.gz
+docs/evidence/backups/*.gpg
+
+# legacy mock auth data (removed — use API users table)
+lib/data/users.json
+
+# env files and sensitive data
+.env*
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+**/.env
+**/.env.*
+api/.env
+api/.env.*
+# Allow committed templates (must come after .env* rules)
+!.env.example
+!**/.env.example
+!api/.env.example
+!deploy/env.api-server.example
+!deploy/env.telemedicine.example
+
+# Server DB dumps (may contain production data)
+/backups/
+api/database/dumps/
+deploy/api/database/ldb/*.sql.gz
+**/*remote_dump*.sql
+
+# Generated from @zoom/meetingsdk (see scripts/copy-zoom-sdk-css.mjs)
+public/vendor/zoom-meetingsdk.css
+
+# sample data SQL files (may contain sensitive test data)
+/api/database/sample_data/*.sql
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Uploads and temporary files
+/api/uploads/*
+!/api/uploads/.gitkeep
+
+# Self-signed TLS (deploy/setup-https-selfsigned.sh) — never commit keys
+deploy/ssl/*.pem
+deploy/ssl/*.key

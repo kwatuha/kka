@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS inpatient_bill_adjustments (
+    adjustmentId INT NOT NULL AUTO_INCREMENT,
+    admissionId INT NOT NULL,
+    lineRef VARCHAR(255) NOT NULL,
+    adjustmentType ENUM('credit', 'debit', 'override', 'discount', 'other') DEFAULT 'credit',
+    deltaAmount DECIMAL(15, 2) NOT NULL,
+    reason TEXT NOT NULL,
+    status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+    requestedBy INT NULL,
+    approvedBy INT NULL,
+    approvedAt DATETIME NULL,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (adjustmentId),
+    FOREIGN KEY (admissionId) REFERENCES admissions(admissionId) ON DELETE CASCADE,
+    FOREIGN KEY (requestedBy) REFERENCES users(userId) ON DELETE SET NULL,
+    FOREIGN KEY (approvedBy) REFERENCES users(userId) ON DELETE SET NULL,
+    INDEX idx_admission (admissionId),
+    INDEX idx_line_ref (lineRef),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

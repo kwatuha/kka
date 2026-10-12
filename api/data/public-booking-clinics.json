@@ -1,0 +1,28 @@
+{
+  "_note": "Keep in sync with lib/public-booking-clinics.json (public /book form).",
+  "sections": [
+    {
+      "title": "General & nursing",
+      "clinics": ["General OPD", "Dressing"]
+    },
+    {
+      "title": "Specialist clinics",
+      "clinics": [
+        "Neurosurgery",
+        "Spine Clinic",
+        "Cardiology",
+        "Renal & Dialysis",
+        "Orthopaedics",
+        "Obstetrics & Gynaecology",
+        "Paediatrics",
+        "Ophthalmology",
+        "ENT",
+        "Dental",
+        "Dermatology",
+        "Mental Health",
+        "Physiotherapy",
+        "Nutrition"
+      ]
+    }
+  ]
+}

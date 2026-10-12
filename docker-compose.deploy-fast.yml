@@ -1,0 +1,145 @@
+# Fast Deployment Configuration - Uses volume mounts for code updates
+# This avoids rebuilding the container for code changes
+# Use this for quick deployments after code changes
+
+version: '3.8'
+
+services:
+  # MySQL Database (same as deploy)
+  mysql_db:
+    image: mysql:8.0
+    container_name: kiplombe_mysql
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-kiplombe_root_pass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-kiplombe_hmis}
+      MYSQL_USER: ${MYSQL_USER:-kiplombe_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-kiplombe_pass}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "${MYSQL_PORT:-3308}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-kiplombe_root_pass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - kiplombe_network
+
+  # API Server (with volume mount for fast updates)
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.prod
+    container_name: kiplombe_api
+    restart: unless-stopped
+    expose:
+      - "3001"
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./api:/app
+      - api_node_modules:/app/node_modules
+      - api_uploads:/app/uploads
+    depends_on:
+      mysql_db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DB_HOST: ${DB_HOST:-mysql_db}
+      DB_USER: ${MYSQL_USER:-kiplombe_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-kiplombe_pass}
+      DB_NAME: ${MYSQL_DATABASE:-kiplombe_hmis}
+      DB_PORT: ${DB_PORT:-3306}
+      JWT_SECRET: ${JWT_SECRET:-change_this_jwt_secret_in_production}
+      PORT: 3001
+      API_BASE_URL: ${API_BASE_URL:-http://kiplombe_api:3001}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      FRONTEND_URL: ${FRONTEND_URL:-http://41.89.173.8}
+    networks:
+      - kiplombe_network
+    command: sh -c "npm install --legacy-peer-deps --only=production && node app.js"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend (Next.js) - Fast deployment with volume mounts
+  # This allows code changes without rebuilding the container
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod.runtime
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+    container_name: kiplombe_frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    volumes:
+      # Mount source code for fast updates
+      - .:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next_build:/app/.next
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      # Base URL for QR codes and absolute links (e.g., http://41.89.173.8 or https://yourdomain.com)
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-}
+      HOSTNAME: "0.0.0.0"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - kiplombe_network
+    # Rebuild only when code changes (faster than full container rebuild)
+    command: sh -c "if [ ! -d .next ] || [ ! -f .next/BUILD_ID ]; then echo 'Building Next.js app...' && npm run build; fi && node server.js"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: kiplombe_nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8081}:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_cache:/var/cache/nginx
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - api
+    networks:
+      - kiplombe_network
+
+networks:
+  kiplombe_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
+  api_uploads:
+    driver: local
+  api_node_modules:
+    driver: local
+  frontend_node_modules:
+    driver: local
+  frontend_next_build:
+    driver: local
+  nginx_cache:
+    driver: local
+  nginx_logs:
+    driver: local
+

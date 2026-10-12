@@ -1,0 +1,141 @@
+# Kakamega County HMIS — API + frontend on shared host MySQL.
+# Create the DB first: ./deploy/setup-kakamega-db-remote.sh
+#
+# Deploy:
+#   LOCAL_ENV_FILE=./deploy/.env.kakamega \
+#     ./deploy/deploy-kakamega-shared-mysql.sh
+#
+# Defaults (override in .env):
+#   API_PORT=3222
+#   HMIS_FRONTEND_PORT=5400
+#   COMPOSE_PROJECT_NAME=intellinex-kakamega
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.prod
+    container_name: kakamega_api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3222}:3001"
+    volumes:
+      - kakamega_api_uploads:/app/uploads
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DB_HOST: ${DB_HOST:-db}
+      DB_USER: ${MYSQL_USER:-${DB_USER:-kakamega_user}}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-${DB_PASSWORD:-}}
+      DB_NAME: ${MYSQL_DATABASE:-${DB_NAME:-kakamega_hmis_db}}
+      DB_PORT: ${DB_PORT:-3306}
+      JWT_SECRET: ${JWT_SECRET:-change_this_jwt_secret_in_production}
+      MPESA_INTERNAL_SECRET: ${MPESA_INTERNAL_SECRET:-}
+      PORT: 3001
+      API_BASE_URL: ${API_BASE_URL:-http://kakamega_api:3001}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      FRONTEND_URL: ${FRONTEND_URL:-}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://hmis:hmis@kakamega_rabbitmq:5672}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hmis.events}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - kakamega_app
+      - existing_mysql
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: kakamega_rabbitmq
+    restart: unless-stopped
+    ports:
+      - "${RABBITMQ_PORT:-5673}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15673}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-hmis}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-hmis}
+    volumes:
+      - kakamega_rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - kakamega_app
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-}
+        NEXT_PUBLIC_PRODUCT_NAME: ${NEXT_PUBLIC_PRODUCT_NAME:-AZ CarePlus}
+        NEXT_PUBLIC_APP_BRAND: ${NEXT_PUBLIC_APP_BRAND:-AZ CarePlus}
+        NEXT_PUBLIC_EXPERIENCE_PACK: ${NEXT_PUBLIC_EXPERIENCE_PACK:-}
+    container_name: kakamega_frontend
+    restart: unless-stopped
+    ports:
+      - "${HMIS_FRONTEND_PORT:-5400}:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HMIS_STATIC_PORT: 3000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-}
+      NEXT_PUBLIC_PRODUCT_NAME: ${NEXT_PUBLIC_PRODUCT_NAME:-AZ CarePlus}
+      NEXT_PUBLIC_APP_BRAND: ${NEXT_PUBLIC_APP_BRAND:-AZ CarePlus}
+      NEXT_PUBLIC_EXPERIENCE_PACK: ${NEXT_PUBLIC_EXPERIENCE_PACK:-}
+      HOSTNAME: "0.0.0.0"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - kakamega_app
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/hmis/"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+networks:
+  kakamega_app:
+    driver: bridge
+  existing_mysql:
+    external: true
+    name: ${EXTERNAL_MYSQL_DOCKER_NETWORK:-projects_default}
+
+volumes:
+  kakamega_api_uploads:
+    driver: local
+  kakamega_rabbitmq_data:
+    driver: local
