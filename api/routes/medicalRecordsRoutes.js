@@ -220,7 +220,8 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ message: 'Patient ID and visit date are required' });
         }
 
-        const tb = readTbScreening(req.body, { required: true });
+        const saveAsDraft = req.body.saveAsDraft === true || req.body.saveAsDraft === 'true';
+        const tb = readTbScreening(req.body, { required: !saveAsDraft });
 
         const [result] = await connection.execute(
             `INSERT INTO medical_records (
@@ -349,7 +350,9 @@ router.put('/:id', async (req, res) => {
             amendmentReason
         } = req.body;
 
-        const tb = readTbScreening(req.body, { required: req.body.tbScreening !== undefined });
+        const encounterInProgress =
+            req.body.encounterInProgress === true || req.body.encounterInProgress === 'true';
+        const tb = readTbScreening(req.body, { required: req.body.tbScreening !== undefined && !encounterInProgress });
 
         // Check if record exists
         const [existing] = await connection.execute(
@@ -372,7 +375,14 @@ router.put('/:id', async (req, res) => {
             return String(req.body[key] ?? '') !== String(prior[key] ?? '');
         });
         const reasonText = String(amendmentReason || '').trim();
-        if (clinicalChanged && !reasonText) {
+        const visitDay = existing[0].visitDate
+            ? String(existing[0].visitDate).slice(0, 10)
+            : null;
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const sameDayOpenEncounter =
+            encounterInProgress && visitDay === todayIso && !existing[0].outcome;
+
+        if (clinicalChanged && !reasonText && !sameDayOpenEncounter) {
             await connection.rollback();
             return res.status(400).json({
                 message: 'amendmentReason is required when changing diagnosis, treatment, or other clinical narrative',

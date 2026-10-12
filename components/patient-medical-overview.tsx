@@ -26,6 +26,7 @@ interface MedicalRecord {
   recordId: number
   visitDate: string
   chiefComplaint?: string
+  historyOfPresentIllness?: string
   diagnosis?: string
   treatment?: string
   visitType?: string
@@ -301,6 +302,12 @@ export function PatientMedicalOverview({ patientId }: MedicalOverviewProps) {
                     <div>
                       <p className="text-xs text-muted-foreground">Chief Complaint</p>
                       <p className="text-sm">{record.chiefComplaint}</p>
+                    </div>
+                  )}
+                  {record.historyOfPresentIllness && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">History</p>
+                      <p className="text-sm">{record.historyOfPresentIllness}</p>
                     </div>
                   )}
                   {record.diagnosis && (
