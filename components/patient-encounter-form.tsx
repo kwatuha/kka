@@ -1,7 +1,7 @@
 "use client"
 
 import dynamic from "next/dynamic"
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm, useFieldArray, useWatch } from "react-hook-form"
 import { z } from "zod"
@@ -291,6 +291,15 @@ const getStorageKey = (patientId:any) => {
   return `patient_encounter_form_draft_${patientId}`
 }
 
+function findTodayMedicalRecord(records: any[], encounterDate?: Date) {
+  const day = format(encounterDate || new Date(), 'yyyy-MM-dd')
+  return (
+    [...(records || [])]
+      .filter((r) => r?.visitDate && format(new Date(r.visitDate), 'yyyy-MM-dd') === day)
+      .sort((a, b) => Number(b.recordId || 0) - Number(a.recordId || 0))[0] || null
+  )
+}
+
 export function PatientEncounterForm({
   open,
   onOpenChange,
@@ -454,6 +463,10 @@ export function PatientEncounterForm({
   const [loadingPatientData, setLoadingPatientData] = useState(false)
   const [isLoadingPatientData, setIsLoadingPatientData] = useState(false) // Prevent multiple simultaneous loads
   const [lastLoadedPatientId, setLastLoadedPatientId] = useState<string | null>(null) // Track last loaded patient
+  const [todayEncounterRecordId, setTodayEncounterRecordId] = useState<number | null>(null)
+  const hydratedTodayKeyRef = useRef<string | null>(null)
+  const persistProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const todayEncounterRecordIdRef = useRef<number | null>(null)
   const [selectedDiagnoses, setSelectedDiagnoses] = useState<any[]>([])
   const [addDiagnosesToProblemList, setAddDiagnosesToProblemList] = useState(true)
   const [clinicalCdsAlerts, setClinicalCdsAlerts] = useState<
@@ -678,6 +691,55 @@ export function PatientEncounterForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]) // Only depend on 'open' to prevent multiple triggers
 
+  const persistEncounterProgress = useCallback(async (data: any) => {
+    const pid = data?.patientId
+    if (!pid || !open) return
+    const hasClinical =
+      String(data.chiefComplaint || "").trim() ||
+      String(data.symptoms || "").trim() ||
+      String(data.historyOfPresentIllness || "").trim() ||
+      String(data.diagnosis || "").trim() ||
+      String(data.physicalExamination || "").trim() ||
+      String(data.treatment || "").trim() ||
+      String(data.notes || "").trim()
+    if (!hasClinical) return
+
+    const visitDate = format(
+      data.encounterDate instanceof Date ? data.encounterDate : new Date(),
+      "yyyy-MM-dd"
+    )
+    const payload = {
+      patientId: parseInt(String(pid), 10),
+      doctorId: data.doctorId ? parseInt(String(data.doctorId), 10) : null,
+      visitDate,
+      visitType: data.visitType || "Outpatient",
+      department: data.department || null,
+      chiefComplaint: data.chiefComplaint || null,
+      symptoms: data.symptoms || null,
+      historyOfPresentIllness: data.historyOfPresentIllness || null,
+      physicalExamination: data.physicalExamination || null,
+      diagnosis: data.diagnosis || null,
+      treatment: data.treatment || null,
+      notes: data.notes || null,
+    }
+
+    try {
+      const rid = todayEncounterRecordIdRef.current
+      if (rid) {
+        await medicalRecordsApi.update(String(rid), { ...payload, encounterInProgress: true })
+      } else {
+        const created = await medicalRecordsApi.create({ ...payload, saveAsDraft: true })
+        if (created?.recordId) {
+          const id = Number(created.recordId)
+          setTodayEncounterRecordId(id)
+          todayEncounterRecordIdRef.current = id
+        }
+      }
+    } catch (e) {
+      console.warn("[ENCOUNTER FORM] progress save failed (local draft kept):", e)
+    }
+  }, [open])
+
   // Auto-save form data to localStorage - debounced to prevent excessive writes
   useEffect(() => {
     if (!open) return
@@ -702,6 +764,22 @@ export function PatientEncounterForm({
         if (hasData) {
           saveDraftToStorage(value as any)
           setHasUnsavedChanges(true)
+          const hasClinical =
+            value.chiefComplaint ||
+            value.symptoms ||
+            value.historyOfPresentIllness ||
+            value.diagnosis ||
+            value.physicalExamination ||
+            value.treatment ||
+            value.notes
+          if (hasClinical) {
+            if (persistProgressTimerRef.current) {
+              clearTimeout(persistProgressTimerRef.current)
+            }
+            persistProgressTimerRef.current = setTimeout(() => {
+              void persistEncounterProgress(value as any)
+            }, 2000)
+          }
         } else {
           clearDraftFromStorage(value.patientId)
           setHasUnsavedChanges(false)
@@ -713,9 +791,12 @@ export function PatientEncounterForm({
       if (saveTimeout) {
         clearTimeout(saveTimeout)
       }
+      if (persistProgressTimerRef.current) {
+        clearTimeout(persistProgressTimerRef.current)
+      }
       subscription.unsubscribe()
     }
-  }, [form, open])
+  }, [form, open, persistEncounterProgress])
 
   // Reset selected diagnoses when diagnosis sheet closes
   useEffect(() => {
@@ -820,9 +901,59 @@ export function PatientEncounterForm({
       setPatientAppointments([])
       setFollowUpAppointmentForEncounter(null)
       setTodayVitals(null)
+      setTodayEncounterRecordId(null)
+      todayEncounterRecordIdRef.current = null
+      hydratedTodayKeyRef.current = null
       setLastLoadedPatientId(null)
     }
   }, [patientId, open, lastLoadedPatientId, isLoadingPatientData])
+
+  const applyTodayRecordToForm = useCallback(
+    (record: any) => {
+      if (!record) return
+      const yn = (v: unknown) =>
+        v === 1 || v === true || v === "1" || v === "yes"
+          ? "yes"
+          : v === 0 || v === false || v === "0" || v === "no"
+            ? "no"
+            : ""
+      if (record.chiefComplaint) form.setValue("chiefComplaint", record.chiefComplaint)
+      if (record.symptoms) form.setValue("symptoms", record.symptoms)
+      if (record.historyOfPresentIllness) form.setValue("historyOfPresentIllness", record.historyOfPresentIllness)
+      if (record.physicalExamination) form.setValue("physicalExamination", record.physicalExamination)
+      if (record.diagnosis) form.setValue("diagnosis", record.diagnosis)
+      if (record.treatment) form.setValue("treatment", record.treatment)
+      if (record.outcome) form.setValue("outcome", record.outcome)
+      if (record.notes) form.setValue("notes", record.notes)
+      if (record.tbScreening) form.setValue("tbScreening", record.tbScreening)
+      if (record.tbScreenCough != null) form.setValue("tbScreenCough", yn(record.tbScreenCough))
+      if (record.tbScreenFever != null) form.setValue("tbScreenFever", yn(record.tbScreenFever))
+      if (record.tbScreenNightSweats != null) form.setValue("tbScreenNightSweats", yn(record.tbScreenNightSweats))
+      if (record.tbScreenWeightLoss != null) form.setValue("tbScreenWeightLoss", yn(record.tbScreenWeightLoss))
+      if (record.doctorId) form.setValue("doctorId", String(record.doctorId))
+      if (record.visitType) form.setValue("visitType", record.visitType)
+      if (record.department) form.setValue("department", record.department)
+    },
+    [form]
+  )
+
+  // Continue same-day consultation from server record (not an empty form / stale local draft)
+  useEffect(() => {
+    if (!open || !patientId) return
+    const encounterDate = form.getValues("encounterDate") || new Date()
+    const dayKey = `${patientId}-${format(encounterDate, "yyyy-MM-dd")}`
+    if (hydratedTodayKeyRef.current === dayKey) return
+
+    const todayRecord = findTodayMedicalRecord(patientHistory, encounterDate)
+    hydratedTodayKeyRef.current = dayKey
+
+    if (todayRecord?.recordId) {
+      setTodayEncounterRecordId(Number(todayRecord.recordId))
+      todayEncounterRecordIdRef.current = Number(todayRecord.recordId)
+      clearDraftFromStorage(patientId)
+      applyTodayRecordToForm(todayRecord)
+    }
+  }, [open, patientId, patientHistory, applyTodayRecordToForm, form])
 
   // When appointments load (or encounter date changes), detect any follow-up appointment created from this encounter
   useEffect(() => {
@@ -928,14 +1059,23 @@ export function PatientEncounterForm({
 
     // Check if we've already loaded data for this patient/date combination
     const currentFormState = form.getValues()
-    const hasExistingData =
+    const hasOrdersData =
       currentFormState.medications?.length > 0 ||
       currentFormState.labTests?.length > 0 ||
       currentFormState.procedures?.length > 0 ||
       currentFormState.orders?.length > 0
+    const hasClinicalData =
+      !!(
+        currentFormState.chiefComplaint ||
+        currentFormState.symptoms ||
+        currentFormState.historyOfPresentIllness ||
+        currentFormState.diagnosis ||
+        currentFormState.physicalExamination ||
+        currentFormState.treatment
+      )
 
-    // Skip prepopulation if there's already data (from draft or user input)
-    if (hasExistingData) {
+    // Skip duplicate prepopulation when clinical narrative or orders already loaded
+    if (hasClinicalData || hasOrdersData) {
       console.log('⏭️ Skipping prepopulation - form already has data')
       return
     }
@@ -1467,6 +1607,14 @@ export function PatientEncounterForm({
       setPatientProcedures(procedures || [])
       setPatientOrders(consumablesInvoices || [])
       setPatientHistory(records || [])
+      const todayRec = findTodayMedicalRecord(records || [])
+      if (todayRec?.recordId) {
+        setTodayEncounterRecordId(Number(todayRec.recordId))
+        todayEncounterRecordIdRef.current = Number(todayRec.recordId)
+      } else {
+        setTodayEncounterRecordId(null)
+        todayEncounterRecordIdRef.current = null
+      }
       setPatientVitals(vitals || [])
       setPatientAppointments(appts || [])
       // Get today's most recent vitals (no need to check critical vitals here)
@@ -1621,11 +1769,21 @@ export function PatientEncounterForm({
         outcomeValue: data.outcome || 'null',
       })
 
-      const medicalRecord = await medicalRecordsApi.create(medicalRecordData)
-      console.log('✅ Medical record created:', {
-        recordId: medicalRecord?.recordId,
+      const existingId = todayEncounterRecordIdRef.current || todayEncounterRecordId
+      const medicalRecord = existingId
+        ? await medicalRecordsApi.update(String(existingId), {
+            ...medicalRecordData,
+            encounterInProgress: false,
+          })
+        : await medicalRecordsApi.create(medicalRecordData)
+      console.log(existingId ? '✅ Medical record updated:' : '✅ Medical record created:', {
+        recordId: medicalRecord?.recordId || existingId,
         outcome: medicalRecord?.outcome,
       })
+      if (medicalRecord?.recordId) {
+        setTodayEncounterRecordId(Number(medicalRecord.recordId))
+        todayEncounterRecordIdRef.current = Number(medicalRecord.recordId)
+      }
 
       if (addDiagnosesToProblemList && medicalRecord?.recordId) {
         const problemsToAdd =
