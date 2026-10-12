@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Replace kakamega branch history with ONE commit (current tree). Removes all prior
-# commits from that branch so deleted passwords/emails are not reachable via git log.
+# Replace kakamega branch history with ONE commit (exact current HEAD tree only).
+# Does not add untracked files (unlike git add -A on orphan checkout).
 #
-# Usage: from repo root, on branch kakamega with a clean working tree you want to keep:
+# Usage:
 #   ./deploy/git-rewrite-kakamega-clean-history.sh
 #   git push --force origin kakamega
+#   git push --force origin kakamega:main   # if main should match
 #
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,15 +31,11 @@ MSG="AZ CarePlus HMIS (Kakamega) — clean history baseline
 Single root commit; no prior repository history on this branch.
 Credentials and dumps must not be committed — see deploy/GIT_HISTORY_SECRETS.md."
 
-git checkout --orphan kakamega-orphan-tmp
-git rm -rf --cached . >/dev/null 2>&1 || true
-git add -A
-git rm -rf --cached scripts/__pycache__ .tmp api/database/dumps 2>/dev/null || true
-git add -A
-git commit -m "$MSG"
-
-git branch -D kakamega
-git branch -m kakamega
+TREE="$(git rev-parse HEAD^{tree})"
+NEW="$(git commit-tree "$TREE" -m "$MSG")"
+git checkout "$BACKUP"
+git branch -f kakamega "$NEW"
+git checkout kakamega
 
 echo ""
 echo "Done. kakamega now has ONE commit: $(git rev-parse --short HEAD)"
