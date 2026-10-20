@@ -34,8 +34,8 @@ export interface RoleMenuConfigRef {
 
 // Queue service points configuration
 const QUEUE_SERVICE_POINTS = [
-  { value: "triage", label: "Triage" },
-  { value: "registration", label: "Registration" },
+  { value: "triage", label: "Triage Desk" },
+  { value: "registration", label: "Registration Desk" },
   { value: "consultation", label: "Consultation" },
   { value: "laboratory", label: "Laboratory" },
   { value: "radiology", label: "Radiology" },
@@ -67,6 +67,7 @@ const PAGE_TABS: Record<string, Array<{ value: string; label: string }>> = {
   ],
   "/pharmacy": [
     { value: "prescriptions", label: "Prescriptions" },
+    { value: "unpaid", label: "Unpaid prescriptions" },
     { value: "medications", label: "Medications" },
     { value: "drug-inventory", label: "Drug Inventory" },
     { value: "drug-inventory-summary", label: "Inventory Summary" },

@@ -43,7 +43,14 @@ function attachUserFromToken(req) {
 
 /** Always attach req.user when a valid JWT is present (does not reject). */
 function attachUserIfPresent(req, res, next) {
-  attachUserFromToken(req);
+  if (!attachUserFromToken(req)) {
+    try {
+      const { attachUserFromPatientDocumentViewToken } = require('../lib/patientDocumentViewToken');
+      attachUserFromPatientDocumentViewToken(req);
+    } catch {
+      /* optional module load */
+    }
+  }
   next();
 }
 

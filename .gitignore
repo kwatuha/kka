@@ -22,6 +22,11 @@ website/
 deploy/apply-migration*
 deploy/apply-kenya-wards*
 deploy/generate-uat-credenti*
+deploy/env.dha-cert.example
+lib/dha-cert-scope.ts
+scripts/dha-ui-scale-down.sh
+scripts/sync-careplus-logos-from-uat.sh
+
 api/data/Kenya_wards*
 api/database/138_kenya_wards*
 api/database/migrations/

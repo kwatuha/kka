@@ -494,6 +494,21 @@ export const patientApi = {
             fallbackFilename,
             ifNoneMatch ? { ifNoneMatch } : undefined
           ),
+
+        /** Short-lived same-origin URL so PDF/images can stream in iframe/img (no full blob buffer). */
+        getDocumentViewUrl: async (patientId: string, documentId: string) => {
+          const data = await apiRequest<{ url: string; expiresIn: number }>(
+            `/api/patients/${patientId}/documents/${documentId}/view-url`
+          );
+          const base =
+            typeof window !== 'undefined'
+              ? process.env.NEXT_PUBLIC_API_URL || ''
+              : process.env.NEXT_PUBLIC_API_URL || '';
+          return {
+            ...data,
+            absoluteUrl: `${base}${data.url}`,
+          };
+        },
       };
 
 // Department API
@@ -541,6 +556,14 @@ export const pharmacyApi = {
   // Prescriptions
   getPrescriptions: (patientId?: string, status?: string, page = 1, limit = 50) =>
     apiRequest<any[]>(`/api/pharmacy/prescriptions?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(patientId && { patientId }), ...(status && { status }) })}`),
+
+  getPrescriptionsAwaitingPayment: (page = 1, limit = 100) =>
+    apiRequest<any[]>(
+      `/api/pharmacy/prescriptions/awaiting-payment?${new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString(),
+      })}`
+    ),
 
   getPrescription: (id: string) =>
     apiRequest<any>(`/api/pharmacy/prescriptions/${id}`),
@@ -2575,7 +2598,7 @@ export const billingApi = {
   recordPayment: (id: string, data: any) =>
     apiRequest<any>(`/api/billing/invoices/${id}/payment`, { method: 'POST', body: data }),
 
-  getInvoiceForServiceOrder: (kind: 'lab' | 'radiology', orderNumber: string) => {
+  getInvoiceForServiceOrder: (kind: 'lab' | 'radiology' | 'pharmacy', orderNumber: string) => {
     const q = new URLSearchParams({ kind, orderNumber });
     return apiRequest<any>(`/api/billing/invoices/for-service-order?${q.toString()}`);
   },

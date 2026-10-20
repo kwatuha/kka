@@ -19,7 +19,7 @@ import { pollMpesaStkStatus, startMpesaStkPayment } from "@/lib/mpesa-stk"
 import { toast } from "@/components/ui/use-toast"
 
 export type ServiceOrderPayTarget = {
-  kind: "lab" | "radiology"
+  kind: "lab" | "radiology" | "pharmacy"
   orderNumber: string
   patientId: number
   patientPhone?: string | null
@@ -205,7 +205,13 @@ export function MpesaInvoicePayDialog({
           <DialogTitle>Pay with M-Pesa</DialogTitle>
           <DialogDescription>
             {serviceOrder
-              ? `${serviceOrder.kind === "lab" ? "Laboratory" : "Radiology"} order ${serviceOrder.orderNumber}`
+              ? `${
+                  serviceOrder.kind === "lab"
+                    ? "Laboratory"
+                    : serviceOrder.kind === "pharmacy"
+                      ? "Pharmacy"
+                      : "Radiology"
+                } ${serviceOrder.kind === "pharmacy" ? "prescription" : "order"} ${serviceOrder.orderNumber}`
               : invoice
                 ? `Invoice ${invoice.invoiceNumber}`
                 : "Collect payment before service"}

@@ -158,7 +158,10 @@ export default function DepartmentsPage() {
       const iconName = dept.departmentName.split(' ')[0]
       const Icon = departmentIcons[dept.departmentName] || departmentIcons[iconName] || Building2
 
-      const href = `/departments/${dept.departmentName.toLowerCase().replace(/\s+/g, '-')}`
+      const slug = dept.departmentName.toLowerCase().replace(/\s+/g, '-')
+      // Operational desk (same as Triage Desk / Pharmacy) — not the legacy department dashboard
+      const href =
+        slug === 'registration' ? '/registration' : `/departments/${slug}`
 
       return {
         ...dept,

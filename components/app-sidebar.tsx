@@ -11,7 +11,8 @@ import {
 import { useAuth } from "@/lib/auth/auth-context"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import { filterSidebarItems } from "@/lib/role-menu-filter"
-import { applyTelemedicineScopeToItems } from "@/lib/telemedicine-scope"
+import { applyExperiencePackToItems } from "@/lib/experience-pack-scope"
+import { isMobileAppPromoHidden } from "@/lib/dha-cert-scope"
 import * as LucideIcons from "lucide-react"
 import {
   HelpCircle,
@@ -154,7 +155,7 @@ export const AppSidebar = memo(function AppSidebar({ activeCategory }: AppSideba
   const currentCategory = navigationCategories.find(cat => cat.id === activeCategory) || navigationCategories[0]
 
   // Filter sidebar items based on role access, then telemedicine POC scope-down
-  const allowedItems = applyTelemedicineScopeToItems(
+  const allowedItems = applyExperiencePackToItems(
     menuLoading || !menuAccess
       ? currentCategory.items // Show all while loading or if no access data
       : filterSidebarItems(currentCategory.items, currentCategory.id, menuAccess)
@@ -375,15 +376,17 @@ export const AppSidebar = memo(function AppSidebar({ activeCategory }: AppSideba
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarNavLink
-                href="/field-app"
-                title="Mobile app"
-                icon={Smartphone}
-                isActive={pathMatchesItem(pathname, "/field-app")}
-                isCollapsed={showCollapsed}
-              />
-            </SidebarMenuItem>
+            {!isMobileAppPromoHidden() ? (
+              <SidebarMenuItem>
+                <SidebarNavLink
+                  href="/field-app"
+                  title="Mobile app"
+                  icon={Smartphone}
+                  isActive={pathMatchesItem(pathname, "/field-app")}
+                  isCollapsed={showCollapsed}
+                />
+              </SidebarMenuItem>
+            ) : null}
             <SidebarMenuItem>
               <SidebarNavLink
                 href="/help"

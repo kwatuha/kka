@@ -4,7 +4,8 @@
 #   docker compose --env-file .env up -d
 #   ./deploy/setup-kakamega-db-local.sh   # schema + migrations + Kakamega seed
 #
-#   UI (AZ CarePlus): http://localhost:5400/hmis/login   ← not :3100 (generic IntelliNex dev)
+#   UI (AZ CarePlus): http://localhost:5400/hmis/login
+#   Port 3100 on this machine is usually the OLD intellinex stack — not Kakamega CarePlus.
 #   API:              http://localhost:3222
 
 services:
@@ -73,6 +74,8 @@ services:
       NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-3222}
       NEXT_PUBLIC_PRODUCT_NAME: ${NEXT_PUBLIC_PRODUCT_NAME:-AZ CarePlus}
       NEXT_PUBLIC_APP_BRAND: ${NEXT_PUBLIC_APP_BRAND:-AZ CarePlus}
+      NEXT_PUBLIC_EXPERIENCE_PACK: ${NEXT_PUBLIC_EXPERIENCE_PACK:-}
+      NEXT_PUBLIC_SHOW_COMPLIANCE_TOOLING: ${NEXT_PUBLIC_SHOW_COMPLIANCE_TOOLING:-}
       HOSTNAME: "0.0.0.0"
       PORT: 3000
       NODE_OPTIONS: "--max-old-space-size=4096"

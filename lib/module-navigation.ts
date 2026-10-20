@@ -4,7 +4,10 @@ import {
   type NavigationItem,
 } from "./navigation"
 import { filterNavigationCategories, filterSidebarItems, type RoleMenuAccess } from "./role-menu-filter"
-import { applyTelemedicineScopeToCategories, applyTelemedicineScopeToItems } from "./telemedicine-scope"
+import {
+  applyExperiencePackToCategories,
+  applyExperiencePackToItems,
+} from "./experience-pack-scope"
 
 export const MODULE_HUB_PATH = "/hub"
 
@@ -31,7 +34,7 @@ export function getAllowedCategories(
   menuAccess: RoleMenuAccess | null,
   menuLoading: boolean,
 ): NavigationCategory[] {
-  return applyTelemedicineScopeToCategories(
+  return applyExperiencePackToCategories(
     menuLoading || !menuAccess
       ? navigationCategories
       : filterNavigationCategories(navigationCategories, menuAccess),
@@ -49,7 +52,7 @@ export function getAllowedItemsForCategory(
     menuLoading || !menuAccess
       ? category.items
       : filterSidebarItems(category.items, category.id, menuAccess)
-  return applyTelemedicineScopeToItems(roleFiltered)
+  return applyExperiencePackToItems(roleFiltered)
 }
 
 /** First sidebar link to open when entering a module workspace. */

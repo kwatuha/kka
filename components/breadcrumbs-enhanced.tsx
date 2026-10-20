@@ -22,7 +22,7 @@ const routeMappings: Record<string, string> = {
   "executive-dashboard": "Executive dashboard",
   settings: "Settings",
   analytics: "Analytics",
-  triaging: "Triaging",
+  triaging: "Triage Records",
   inpatient: "Inpatient",
   maternity: "Maternity",
   icu: "ICU",

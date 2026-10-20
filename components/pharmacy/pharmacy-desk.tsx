@@ -90,6 +90,12 @@ export function PharmacyDesk({ workbench }: Props) {
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm">
+              <Link href="/pharmacy?tab=unpaid">
+                Unpaid / M-Pesa
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
               <Link href="/pharmacy?tab=patients-by-drug">Patients by drug</Link>
             </Button>
           </div>

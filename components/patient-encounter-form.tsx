@@ -300,6 +300,18 @@ function findTodayMedicalRecord(records: any[], encounterDate?: Date) {
   )
 }
 
+/** GET /laboratory/orders/:id/results returns order items with optional `result` on each row. */
+function mergeLabOrderItemsWithApiResults(items: any[] | undefined, apiItems: any[]) {
+  if (!Array.isArray(apiItems) || apiItems.length === 0) return items || []
+  const enrichedByItemId = new Map(apiItems.map((row) => [Number(row.itemId), row]))
+  const base = items?.length ? items : apiItems
+  return base.map((item) => {
+    const enriched = enrichedByItemId.get(Number(item.itemId))
+    if (!enriched?.result) return item
+    return { ...item, ...enriched, result: enriched.result }
+  })
+}
+
 export function PatientEncounterForm({
   open,
   onOpenChange,
@@ -940,20 +952,24 @@ export function PatientEncounterForm({
   // Continue same-day consultation from server record (not an empty form / stale local draft)
   useEffect(() => {
     if (!open || !patientId) return
+    // Wait until loadPatientData finishes — otherwise we mark "hydrated" with empty history
+    // and never apply today's diagnosis / HPI from the API (local draft wins on reload).
+    if (isLoadingPatientData) return
+
     const encounterDate = form.getValues("encounterDate") || new Date()
     const dayKey = `${patientId}-${format(encounterDate, "yyyy-MM-dd")}`
     if (hydratedTodayKeyRef.current === dayKey) return
 
-    const todayRecord = findTodayMedicalRecord(patientHistory, encounterDate)
     hydratedTodayKeyRef.current = dayKey
 
+    const todayRecord = findTodayMedicalRecord(patientHistory, encounterDate)
     if (todayRecord?.recordId) {
       setTodayEncounterRecordId(Number(todayRecord.recordId))
       todayEncounterRecordIdRef.current = Number(todayRecord.recordId)
       clearDraftFromStorage(patientId)
       applyTodayRecordToForm(todayRecord)
     }
-  }, [open, patientId, patientHistory, applyTodayRecordToForm, form])
+  }, [open, patientId, patientHistory, isLoadingPatientData, applyTodayRecordToForm, form])
 
   // When appointments load (or encounter date changes), detect any follow-up appointment created from this encounter
   useEffect(() => {
@@ -1433,10 +1449,6 @@ export function PatientEncounterForm({
         (!order.items || order.items.length === 0)
       )
 
-      const completedLabOrders = (labOrders || []).filter((order: any) =>
-        order.status === 'completed'
-      )
-
       // Fetch details for pending/in-progress orders that don't have items
       const pendingOrdersWithItems = pendingLabOrders.length > 0
         ? await Promise.all(
@@ -1452,67 +1464,56 @@ export function PatientEncounterForm({
           )
         : []
 
-      // Fetch details and results for completed orders (limit to most recent 10 to prevent freezing)
-      const completedOrdersWithResults = completedLabOrders.length > 0
+      // Fetch results for recent orders (not only status=completed — results may exist while order is in_progress)
+      const recentLabOrdersForResults = [...(labOrders || [])]
+        .sort((a: any, b: any) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime())
+        .slice(0, 15)
+
+      const ordersWithResults = recentLabOrdersForResults.length > 0
         ? await Promise.all(
-            completedLabOrders
-              .sort((a: any, b: any) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime()) // Sort by date, newest first
-              .slice(0, 10) // Limit to 10 most recent to prevent too many API calls
-              .map(async (order: any) => {
-                try {
-                  // Fetch full order if items are missing
-                  let fullOrder = order
-                  if (!order.items || order.items.length === 0) {
-                    fullOrder = await laboratoryApi.getOrder(order.orderId.toString()) || order
-                  }
-                  
-                  // Fetch results for completed orders (with timeout protection)
-                  try {
-                    const results = await Promise.race([
-                      laboratoryApi.getOrderResults(fullOrder.orderId.toString()),
-                      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000)) // 5 second timeout
-                    ]) as any[]
-                    
-                    if (results && fullOrder.items) {
-                      fullOrder.items = fullOrder.items.map((item: any) => {
-                        const itemResult = results.find((r: any) => r.itemId === item.itemId)
-                        return itemResult ? { ...item, result: itemResult.result } : item
-                      })
-                    }
-                  } catch (err: any) {
-                    if (err.message !== 'Timeout') {
-                      console.error(`Error fetching results for completed order ${fullOrder.orderId}:`, err)
-                    }
-                    // Continue without results if fetch fails
-                  }
-                  
-                  return fullOrder
-                } catch (err) {
-                  console.error(`Error fetching completed order ${order.orderId}:`, err)
-                  return order
+            recentLabOrdersForResults.map(async (order: any) => {
+              try {
+                let fullOrder = order
+                if (!order.items || order.items.length === 0) {
+                  fullOrder = (await laboratoryApi.getOrder(order.orderId.toString())) || order
                 }
-              })
+
+                try {
+                  const apiItems = (await Promise.race([
+                    laboratoryApi.getOrderResults(fullOrder.orderId.toString()),
+                    new Promise((_, reject) =>
+                      setTimeout(() => reject(new Error('Timeout')), 15_000)
+                    ),
+                  ])) as any[]
+
+                  if (Array.isArray(apiItems) && apiItems.length > 0) {
+                    fullOrder = {
+                      ...fullOrder,
+                      items: mergeLabOrderItemsWithApiResults(fullOrder.items, apiItems),
+                    }
+                  }
+                } catch (err: any) {
+                  if (err.message !== 'Timeout') {
+                    console.error(`Error fetching results for order ${fullOrder.orderId}:`, err)
+                  }
+                }
+
+                return fullOrder
+              } catch (err) {
+                console.error(`Error enriching lab order ${order.orderId}:`, err)
+                return order
+              }
+            })
           )
         : []
-      
-      // Add remaining completed orders without fetching results (to show they exist)
-      const remainingCompletedOrders = completedLabOrders.length > 10
-        ? completedLabOrders
-            .sort((a: any, b: any) => new Date(b.orderDate).getTime() - new Date(a.orderDate).getTime())
-            .slice(10) // Orders beyond the first 10
-        : []
-      
-      // Merge: orders with results + remaining orders without results
-      const allCompletedOrders = [...completedOrdersWithResults, ...remainingCompletedOrders]
 
-      // Merge all orders: pending with items + completed with results + others
+      // Merge all orders: pending with items + orders enriched with results + others
       const orderMap = new Map()
       
       // Add pending orders with fetched details
       pendingOrdersWithItems.forEach(o => orderMap.set(o.orderId, o))
       
-      // Add completed orders (with and without results)
-      allCompletedOrders.forEach(o => orderMap.set(o.orderId, o))
+      ordersWithResults.forEach(o => orderMap.set(o.orderId, o))
       
       // Add any remaining orders that weren't fetched (in-progress with items, etc.)
       ;(labOrders || []).forEach((order: any) => {
@@ -4846,11 +4847,11 @@ const clearDraftFromStorage = (patientId:any) => {
                   <CardDescription>Upload reports done outside this facility (PDF, images)</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {patientId ? (
-                    <PatientDocuments patientId={String(patientId)} />
-                  ) : (
+                  {!patientId ? (
                     <p className="text-sm text-muted-foreground">Select a patient first.</p>
-                  )}
+                  ) : investigationsSheetOpen ? (
+                    <PatientDocuments patientId={String(patientId)} />
+                  ) : null}
                 </CardContent>
               </Card>
             </div>
@@ -4875,10 +4876,10 @@ const clearDraftFromStorage = (patientId:any) => {
           </SheetHeader>
           <ScrollArea className="flex-1 px-6">
             <div className="py-4">
-              {patientId ? (
-                <PatientDocuments patientId={String(patientId)} />
-              ) : (
+              {!patientId ? (
                 <p className="text-sm text-muted-foreground">Select a patient first.</p>
+              ) : (
+                <PatientDocuments patientId={String(patientId)} />
               )}
             </div>
           </ScrollArea>

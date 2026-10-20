@@ -12,6 +12,15 @@
 
 The app loads these automatically via `HospitalLogoImage`. If all assets fail, the vector `AzCarePlusLogo` component is shown.
 
+**Local dev:** PNGs may be missing until you sync from UAT (same files as production static host):
+
+```bash
+chmod +x scripts/sync-careplus-logos-from-uat.sh
+./scripts/sync-careplus-logos-from-uat.sh
+```
+
+Then hard-refresh `http://localhost:5400/hmis/login` (Docker bind-mounts `public/` live).
+
 ## Override via environment
 
 ```bash

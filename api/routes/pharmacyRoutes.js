@@ -297,6 +297,82 @@ router.get('/prescriptions', async (req, res) => {
 });
 
 /**
+ * @route GET /api/pharmacy/prescriptions/awaiting-payment
+ * @description Prescriptions with an open drug-payment invoice (cashier / M-Pesa STK before dispense)
+ */
+router.get('/prescriptions/awaiting-payment', async (req, res) => {
+    try {
+        const { page = 1, limit = 100 } = req.query;
+        const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+        const [rows] = await pool.execute(
+            `SELECT p.*,
+                    pt.firstName, pt.lastName, pt.patientNumber, pt.phone AS patientPhone,
+                    u.firstName AS doctorFirstName, u.lastName AS doctorLastName,
+                    i.invoiceId, i.invoiceNumber, i.totalAmount, i.paidAmount, i.balance AS invoiceBalance,
+                    i.status AS invoiceStatus
+             FROM prescriptions p
+             INNER JOIN invoices i ON i.invoiceId = (
+                 SELECT i2.invoiceId
+                 FROM invoices i2
+                 WHERE (
+                     i2.notes LIKE CONCAT('%Drug payment - Prescription: ', p.prescriptionNumber, '%')
+                     OR i2.notes LIKE CONCAT('%Prescription: ', p.prescriptionNumber, '%')
+                 )
+                   AND LOWER(i2.status) NOT IN ('cancelled', 'draft')
+                 ORDER BY i2.invoiceId DESC
+                 LIMIT 1
+             )
+             LEFT JOIN patients pt ON p.patientId = pt.patientId
+             LEFT JOIN users u ON p.doctorId = u.userId
+             WHERE p.status = 'pending'
+               AND LOWER(i.status) NOT IN ('cancelled', 'paid', 'waived', 'draft')
+               AND (
+                 COALESCE(i.balance, 0) > 0
+                 OR (COALESCE(i.totalAmount, 0) - COALESCE(i.paidAmount, 0)) > 0
+               )
+             ORDER BY p.prescriptionDate DESC
+             LIMIT ${parseInt(limit, 10)} OFFSET ${offset}`,
+            []
+        );
+
+        const withItems = await Promise.all(
+            (rows || []).map(async (prescription) => {
+                try {
+                    const [items] = await pool.execute(
+                        `SELECT pi.*, m.name AS medicationNameFromCatalog
+                         FROM prescription_items pi
+                         LEFT JOIN medications m ON pi.medicationId = m.medicationId
+                         WHERE pi.prescriptionId = ?
+                         ORDER BY pi.itemId`,
+                        [prescription.prescriptionId]
+                    );
+                    const medNames = (items || [])
+                        .map(
+                            (it) =>
+                                it.medicationName ||
+                                it.medicationNameFromCatalog ||
+                                'Medication'
+                        )
+                        .join(', ');
+                    return { ...prescription, items: items || [], medicationSummary: medNames };
+                } catch {
+                    return { ...prescription, items: [], medicationSummary: '' };
+                }
+            })
+        );
+
+        res.status(200).json(withItems);
+    } catch (error) {
+        console.error('Error fetching awaiting-payment prescriptions:', error);
+        res.status(500).json({
+            message: 'Error fetching awaiting-payment prescriptions',
+            error: error.message,
+        });
+    }
+});
+
+/**
  * @route GET /api/pharmacy/prescriptions/:id
  * @description Get a prescription with items
  */

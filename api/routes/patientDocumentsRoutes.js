@@ -47,6 +47,12 @@ const storage = multer.diskStorage({
     }
 });
 
+const {
+    signPatientDocumentViewToken,
+    verifyPatientDocumentViewToken,
+    VIEW_TOKEN_TTL_SEC,
+} = require('../lib/patientDocumentViewToken');
+
 const upload = multer({
     storage: storage,
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
@@ -250,11 +256,61 @@ router.delete('/:patientId/documents/:id', async (req, res) => {
 });
 
 /**
+ * @route GET /api/patients/:patientId/documents/:id/view-url
+ * @description Short-lived URL for in-browser streaming preview (iframe/img)
+ */
+router.get('/:patientId/documents/:id/view-url', async (req, res) => {
+    try {
+        const { patientId, id } = req.params;
+        const userId = req.user?.userId ?? req.user?.id;
+        if (userId == null) {
+            return res.status(401).json({ message: 'Authentication required' });
+        }
+
+        const [rows] = await pool.execute(
+            'SELECT documentId FROM patient_documents WHERE documentId = ? AND patientId = ?',
+            [id, patientId]
+        );
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Document not found' });
+        }
+
+        const viewToken = signPatientDocumentViewToken({
+            patientId,
+            documentId: id,
+            userId,
+        });
+        const qs = new URLSearchParams({ inline: '1', viewToken });
+        res.status(200).json({
+            url: `/api/patients/${encodeURIComponent(patientId)}/documents/${encodeURIComponent(id)}/download?${qs}`,
+            expiresIn: VIEW_TOKEN_TTL_SEC,
+        });
+    } catch (error) {
+        console.error('Error creating document view URL:', error);
+        res.status(500).json({ message: 'Error creating document view URL', error: error.message });
+    }
+});
+
+/**
  * @route GET /api/patients/:patientId/documents/:id/download
  * @description Download a patient document
  */
 router.get('/:patientId/documents/:id/download', async (req, res) => {
     try {
+        if (req.query.viewToken) {
+            try {
+                const decoded = verifyPatientDocumentViewToken(String(req.query.viewToken));
+                if (
+                    decoded.patientId !== req.params.patientId ||
+                    String(decoded.documentId) !== String(req.params.id)
+                ) {
+                    return res.status(403).json({ message: 'View token does not match document' });
+                }
+            } catch {
+                return res.status(401).json({ message: 'Invalid or expired view token' });
+            }
+        }
+
         const [rows] = await pool.execute(
             'SELECT * FROM patient_documents WHERE documentId = ? AND patientId = ?',
             [req.params.id, req.params.patientId]

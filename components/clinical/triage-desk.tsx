@@ -41,10 +41,10 @@ export function TriageDesk() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Activity className="h-6 w-6 text-teal-800" />
-            Triage desk
+            Triage Desk
           </h1>
           <p className="text-muted-foreground">
-            Assess waiting patients and route them to the next service
+            Service-point queue — call patients; use Triage Records for the full assessment list
             {currentBranch?.branchName ? ` · ${currentBranch.branchName}` : ""}
           </p>
         </div>
@@ -52,7 +52,7 @@ export function TriageDesk() {
           <Button asChild variant="outline" size="sm">
             <Link href="/triaging">
               <ClipboardList className="mr-2 h-4 w-4" />
-              Triage list
+              Triage records
             </Link>
           </Button>
           <ServicePointSelector pointType="triage" />

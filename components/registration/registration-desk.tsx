@@ -43,10 +43,10 @@ export function RegistrationDesk() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <UserPlus className="h-6 w-6 text-sky-800" />
-            Registration desk
+            Registration Desk
           </h1>
           <p className="text-muted-foreground">
-            Register patients and manage the registration queue
+            Service-point queue — call patients; use Patients for search and new registration
             {currentBranch?.branchName ? ` · ${currentBranch.branchName}` : ""}
           </p>
         </div>

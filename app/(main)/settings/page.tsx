@@ -14,6 +14,7 @@ import { useAuth } from "@/lib/auth/auth-context"
 import { userApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
 import { TwoFactorSetupModal } from "@/components/two-factor-setup-modal"
+import { isDhaCertUiFeatureHidden } from "@/lib/dha-cert-scope"
 
 function PasswordField({
   id,
@@ -433,29 +434,31 @@ export default function SettingsPage() {
                 </Card>
               </Link>
 
-              <Link href="/settings/external-chemists">
-                <Card className="cursor-pointer hover:bg-accent transition-colors">
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-md bg-primary/10">
-                          <Store className="h-5 w-5 text-primary" />
+              {!isDhaCertUiFeatureHidden("/settings/external-chemists") ? (
+                <Link href="/settings/external-chemists">
+                  <Card className="cursor-pointer hover:bg-accent transition-colors">
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-md bg-primary/10">
+                            <Store className="h-5 w-5 text-primary" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-lg">External Chemists</CardTitle>
+                            <CardDescription>Register partner chemists and patient pickup locations</CardDescription>
+                          </div>
                         </div>
-                        <div>
-                          <CardTitle className="text-lg">External Chemists</CardTitle>
-                          <CardDescription>Register partner chemists and patient pickup locations</CardDescription>
-                        </div>
+                        <ArrowRight className="h-5 w-5 text-muted-foreground" />
                       </div>
-                      <ArrowRight className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground">
-                      Manage external chemists, geolocation details, contacts, and linked chemist login users.
-                    </p>
-                  </CardContent>
-                </Card>
-              </Link>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground">
+                        Manage external chemists, geolocation details, contacts, and linked chemist login users.
+                      </p>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ) : null}
             </CardContent>
           </Card>
         </TabsContent>

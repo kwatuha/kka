@@ -38,15 +38,22 @@ Staff sign in through the HMIS API (`POST /api/auth/login`). User accounts and p
    pnpm install
    ```
 
-2. **Run Development Server**
+2. **Run locally (pick one)**
+
+   **Docker (Kakamega / AZ CarePlus — recommended):**
+   ```bash
+   docker compose --env-file .env up -d
+   ./deploy/setup-kakamega-db-local.sh   # first time only
+   ```
+   Open **[http://localhost:5400/hmis/login](http://localhost:5400/hmis/login)** (API: `http://localhost:3222`).
+
+   **Host Next.js dev** (stop the legacy `intellinex_frontend` container first if port 3100 is in use):
    ```bash
    npm run dev
-   # or
-   pnpm dev
    ```
+   Open **[http://localhost:3100/hmis/login](http://localhost:3100/hmis/login)** with `NEXT_PUBLIC_API_URL=http://localhost:3222` in `.env` or `.env.local`.
 
-3. **Open Application**
-   Navigate to [http://localhost:3100](http://localhost:3100)
+   > **Note:** Port **3100** is often used by the separate **IntelliNex** docker stack (`intellinex_frontend`), not AZ CarePlus. If you see old IntelliNex branding, use **5400** or stop that container.
 
 4. **Login**
    Use staff accounts from your environment (UAT list: `docs/UAT_TEST_CREDENTIALS.xlsx`, local only — see `deploy/UAT_TEST_CREDENTIALS.README.md`)

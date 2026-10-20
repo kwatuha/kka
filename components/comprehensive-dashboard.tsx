@@ -39,6 +39,7 @@ import Link from "next/link"
 import { useAuth } from "@/lib/auth/auth-context"
 import { filterDashboardCards } from "@/lib/dashboard-cards-config"
 import { branding } from "@/lib/branding"
+import { isMobileAppPromoHidden, isTelemedicinePromoHidden } from "@/lib/dha-cert-scope"
 
 interface DashboardStats {
   totalPatients: number
@@ -399,18 +400,22 @@ export function ComprehensiveDashboard() {
                   Manage Queue
                 </Link>
               </Button>
-              <Button variant="outline" className="w-full justify-start" asChild>
-                <Link href="/telemedicine">
-                  <Video className="mr-2 h-4 w-4" />
-                  Telemedicine
-                </Link>
-              </Button>
-              <Button variant="outline" className="w-full justify-start" asChild>
-                <Link href="/field-app">
-                  <Smartphone className="mr-2 h-4 w-4" />
-                  Download mobile app
-                </Link>
-              </Button>
+              {!isTelemedicinePromoHidden() ? (
+                <Button variant="outline" className="w-full justify-start" asChild>
+                  <Link href="/telemedicine">
+                    <Video className="mr-2 h-4 w-4" />
+                    Telemedicine
+                  </Link>
+                </Button>
+              ) : null}
+              {!isMobileAppPromoHidden() ? (
+                <Button variant="outline" className="w-full justify-start" asChild>
+                  <Link href="/field-app">
+                    <Smartphone className="mr-2 h-4 w-4" />
+                    Download mobile app
+                  </Link>
+                </Button>
+              ) : null}
               <Button variant="outline" className="w-full justify-start" asChild>
                 <Link href="/billing">
                   <DollarSign className="mr-2 h-4 w-4" />

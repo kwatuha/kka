@@ -283,7 +283,7 @@ router.get('/invoices', async (req, res) => {
 /**
  * @route GET /api/billing/invoices/for-service-order
  * @description Pending invoice linked to a lab or radiology order (paid-before-service workflow)
- * @query kind=lab|radiology, orderNumber=LAB-…|RAD-…
+ * @query kind=lab|radiology|pharmacy, orderNumber=LAB-…|RAD-…|PRESC-…
  */
 router.get('/invoices/for-service-order', async (req, res) => {
     try {
@@ -295,7 +295,9 @@ router.get('/invoices/for-service-order', async (req, res) => {
         const notePrefix =
             kind === 'radiology'
                 ? `Radiology payment - Order: ${orderNumber}`
-                : `Lab payment - Order: ${orderNumber}`;
+                : kind === 'pharmacy'
+                  ? `Drug payment - Prescription: ${orderNumber}`
+                  : `Lab payment - Order: ${orderNumber}`;
 
         const [rows] = await pool.execute(
             `SELECT i.*,
@@ -326,7 +328,8 @@ router.get('/invoices/for-service-order', async (req, res) => {
         res.status(200).json({
             ...inv,
             balance,
-            serviceKind: kind === 'radiology' ? 'radiology' : 'lab',
+            serviceKind:
+                kind === 'radiology' ? 'radiology' : kind === 'pharmacy' ? 'pharmacy' : 'lab',
             orderNumber,
         });
     } catch (error) {

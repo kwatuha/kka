@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import {
@@ -10,13 +11,15 @@ import {
 } from "@/lib/module-navigation"
 import { getModuleHubCardTheme } from "@/lib/navigation-category-theme"
 import { cn } from "@/lib/utils"
-import { ArrowRight } from "lucide-react"
+import { ArrowRight, LogOut } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { branding } from "@/lib/branding"
 import { getPersonalGreetingName } from "@/lib/user-greeting"
 import { HospitalLogoImage } from "@/components/hospital-logo-image"
 import * as LucideIcons from "lucide-react"
 
 export function ModuleHub() {
+  const router = useRouter()
   const { user } = useAuth()
   const { menuAccess, loading } = useRoleMenuAccess(user?.id)
   const categories = getAllowedCategories(menuAccess, loading)
@@ -28,7 +31,7 @@ export function ModuleHub() {
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col justify-center px-1 py-4 sm:px-2 sm:py-6 min-h-[calc(100dvh-10.5rem)]">
-      <header className="mb-5 flex flex-col items-center gap-4 text-center sm:mb-6 sm:flex-row sm:items-end sm:justify-between sm:text-left">
+      <header className="mb-5 flex flex-col items-center gap-4 text-center sm:mb-6 sm:flex-row sm:items-start sm:justify-between sm:text-left">
         <div className="min-w-0 space-y-1 sm:flex-1">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-primary">
             {branding.appBrand}
@@ -39,11 +42,23 @@ export function ModuleHub() {
             open its workspace.
           </p>
         </div>
-        <HospitalLogoImage
-          adaptToTheme
-          variant="compact"
-          className="h-10 w-auto max-w-[150px] shrink-0 opacity-95 sm:h-11"
-        />
+        <div className="flex shrink-0 flex-col items-center gap-2 sm:items-end">
+          <HospitalLogoImage
+            adaptToTheme
+            variant="compact"
+            className="h-10 w-auto max-w-[150px] opacity-95 sm:h-11"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => router.push("/logout")}
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            Log out
+          </Button>
+        </div>
       </header>
 
       {Array.isArray(quickLinks) && quickLinks.length > 0 && (

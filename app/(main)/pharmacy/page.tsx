@@ -24,6 +24,7 @@ import { DrugMovement } from "@/components/drug-movement"
 import { PharmacyDesk } from "@/components/pharmacy/pharmacy-desk"
 import { PatientsByDrugSearch } from "@/components/pharmacy/patients-by-drug-search"
 import { PharmacyStoreStatusPanel } from "@/components/pharmacy/store-status-panel"
+import { PharmacyUnpaidPrescriptions } from "@/components/pharmacy/pharmacy-unpaid-prescriptions"
 import { useFacilityUnits } from "@/lib/hooks/use-facility-units"
 import { useAuth } from "@/lib/auth/auth-context"
 import { pharmacyApi } from "@/lib/api"
@@ -1610,6 +1611,7 @@ export default function PharmacyPage() {
       <RoleFilteredTabs
         tabs={[
           { value: "prescriptions", label: "Prescriptions" },
+          { value: "unpaid", label: "Unpaid prescriptions" },
           { value: "patients-by-drug", label: "Patients by drug" },
           { value: "medications", label: "Medications" },
           { value: "drug-inventory", label: "Drug Inventory" },
@@ -1626,11 +1628,18 @@ export default function PharmacyPage() {
         onValueChange={setPharmacyTab}
         className="w-full"
       >
+        <TabsContent value="unpaid" className="space-y-4 mt-4">
+          <PharmacyUnpaidPrescriptions />
+        </TabsContent>
+
         <TabsContent value="prescriptions" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
               <CardTitle>Prescription Management</CardTitle>
-              <CardDescription>View and manage patient prescriptions</CardDescription>
+              <CardDescription>
+                View and manage patient prescriptions. Unpaid bills (cashier / M-Pesa) are under{" "}
+                <strong>Unpaid prescriptions</strong>.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between mb-4">

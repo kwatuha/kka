@@ -288,7 +288,7 @@ export default function TriagingPage() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Patient Triaging</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Triage Records</h1>
           <p className="text-muted-foreground">Manage patient triage and prioritization</p>
         </div>
         <Button onClick={() => setAddTriageOpen(true)}>

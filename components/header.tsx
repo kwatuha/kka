@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   ChevronDown,
 } from "lucide-react"
+import { isMobileAppPromoHidden } from "@/lib/dha-cert-scope"
 import { HeaderGlobalSearch } from "@/components/header-global-search"
 import { BreadcrumbsEnhanced } from "@/components/breadcrumbs-enhanced"
 import { CriticalAlertsHeaderBadge } from "@/components/critical-alerts-header-badge"
@@ -30,7 +31,8 @@ import { PharmacyNotificationsHeaderBadge } from "@/components/pharmacy-notifica
 import { PublicHealthNotificationsHeaderBadge } from "@/components/public-health-notifications-header-badge"
 import { ChangePasswordModal } from "@/components/change-password-modal"
 import { TwoFactorSetupModal } from "@/components/two-factor-setup-modal"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
+import { isModuleHubPath } from "@/lib/module-navigation"
 import Link from "next/link"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useChemistScope } from "@/lib/hooks/use-chemist-scope"
@@ -39,6 +41,8 @@ import { cn } from "@/lib/utils"
 
 export const Header = memo(function Header() {
   const router = useRouter()
+  const pathname = usePathname()
+  const hubMode = isModuleHubPath(pathname)
   const { user, currentBranch, accessibleBranches, setCurrentBranch } = useAuth()
   const { displayName: chemistDisplayName, isChemistUser } = useChemistScope()
   const canSwitchBranch = accessibleBranches.length > 1
@@ -59,9 +63,9 @@ export const Header = memo(function Header() {
   return (
     <header className="app-chrome-header sticky top-0 z-[60] flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:px-3">
       <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
-        <SidebarTrigger />
+        {!hubMode ? <SidebarTrigger /> : null}
         <BreadcrumbsEnhanced />
-        <HeaderGlobalSearch />
+        {!hubMode ? <HeaderGlobalSearch /> : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
@@ -108,11 +112,13 @@ export const Header = memo(function Header() {
           <PharmacyNotificationsHeaderBadge />
         </div>
 
-        <Button variant="ghost" size="icon" className="hidden h-8 w-8 sm:flex" asChild title="Mobile app">
-          <Link href="/field-app" aria-label="Download mobile app">
-            <Smartphone className="h-4 w-4" />
-          </Link>
-        </Button>
+        {!isMobileAppPromoHidden() ? (
+          <Button variant="ghost" size="icon" className="hidden h-8 w-8 sm:flex" asChild title="Mobile app">
+            <Link href="/field-app" aria-label="Download mobile app">
+              <Smartphone className="h-4 w-4" />
+            </Link>
+          </Button>
+        ) : null}
         <ModeToggle />
 
         {userDisplayName ? (
@@ -173,10 +179,12 @@ export const Header = memo(function Header() {
                 <Settings className="mr-2 h-4 w-4" />
                 Settings
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push("/field-app")}>
-                <Smartphone className="mr-2 h-4 w-4" />
-                Mobile app
-              </DropdownMenuItem>
+              {!isMobileAppPromoHidden() ? (
+                <DropdownMenuItem onClick={() => router.push("/field-app")}>
+                  <Smartphone className="mr-2 h-4 w-4" />
+                  Mobile app
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
@@ -191,13 +199,24 @@ export const Header = memo(function Header() {
 
         <Button
           variant="outline"
-          size="icon"
+          size={hubMode ? "sm" : "icon"}
           onClick={() => router.push("/logout")}
-          className="h-8 w-8 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive sm:h-9 sm:w-9"
+          className={
+            hubMode
+              ? "h-9 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              : "h-8 w-8 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive sm:h-9 sm:w-9"
+          }
           title="Log out"
           aria-label="Log out"
         >
-          <LogOut className="h-4 w-4" />
+          {hubMode ? (
+            <>
+              <LogOut className="mr-2 h-4 w-4" />
+              Log out
+            </>
+          ) : (
+            <LogOut className="h-4 w-4" />
+          )}
         </Button>
       </div>
 

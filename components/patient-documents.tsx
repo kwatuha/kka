@@ -80,7 +80,8 @@ export function PatientDocuments({ patientId }: { patientId: string }) {
   const { user } = useAuth()
 
   type PreviewCacheEntry = {
-    blob: Blob
+    blob: Blob | null
+    streamUrl: string | null
     objectUrl: string | null
     previewText: string | null
     kind: PreviewKind
@@ -276,7 +277,7 @@ export function PatientDocuments({ patientId }: { patientId: string }) {
       setPreviewKind(cached.kind)
       setPreviewBlob(cached.blob)
       setPreviewText(cached.previewText)
-      setPreviewUrl(cached.objectUrl)
+      setPreviewUrl(cached.streamUrl ?? cached.objectUrl)
       return
     }
 
@@ -287,30 +288,44 @@ export function PatientDocuments({ patientId }: { patientId: string }) {
     setPreviewText(null)
     setPreviewUrl(null)
     try {
-      const { blob, filename, etag } = await fetchDocumentBlob(doc)
-      const kind = resolvePreviewKind(doc.mimeType || blob.type, filename || doc.documentName)
+      const kind = resolvePreviewKind(doc.mimeType, doc.documentName)
       let objectUrl: string | null = null
+      let streamUrl: string | null = null
       let previewText: string | null = null
+      let blob: Blob | null = null
+      let etag: string | null = null
 
-      if (kind === "text") {
-        const text = await blob.text()
+      if (kind === "pdf" || kind === "image") {
+        const view = await patientApi.getDocumentViewUrl(
+          patientId,
+          doc.documentId.toString()
+        )
+        streamUrl = view.absoluteUrl
+      } else if (kind === "text") {
+        const fetched = await fetchDocumentBlob(doc)
+        blob = fetched.blob
+        etag = fetched.etag ?? null
+        const text = await fetched.blob.text()
         previewText = text.slice(0, 500_000)
-      } else if (kind === "pdf" || kind === "image") {
-        objectUrl = URL.createObjectURL(blob)
+      } else {
+        const fetched = await fetchDocumentBlob(doc)
+        blob = fetched.blob
+        etag = fetched.etag ?? null
       }
 
       previewCacheRef.current.set(doc.documentId, {
         blob,
+        streamUrl,
         objectUrl,
         previewText,
         kind,
-        etag: etag ?? null,
+        etag,
       })
 
       setPreviewKind(kind)
       setPreviewBlob(blob)
       setPreviewText(previewText)
-      setPreviewUrl(objectUrl)
+      setPreviewUrl(streamUrl ?? objectUrl)
     } catch (err: any) {
       console.error("Error loading document preview:", err)
       toast({

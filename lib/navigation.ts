@@ -142,26 +142,28 @@ export const navigationCategories: NavigationCategory[] = [
     description: "Patient management and care services",
     items: [
       {
-        title: "Patient Registration",
+        title: "Patients",
         icon: Users,
         href: "/patients",
+        description: "Search, register, and update patient records",
       },
       {
         title: "Registration Desk",
         icon: UserPlus,
         href: "/registration",
-        description: "Registration queue and new patient intake",
+        description: "Front-desk queue — call patients and send to triage or clinic",
       },
       {
-        title: "Triaging",
-        icon: Activity,
+        title: "Triage Records",
+        icon: Clipboard,
         href: "/triaging",
+        description: "View and manage triage assessments",
       },
       {
         title: "Triage Desk",
         icon: Activity,
         href: "/triage-desk",
-        description: "Call and triage patients from the queue",
+        description: "Service-point queue — call patients and record triage",
       },
       {
         title: "Appointments",

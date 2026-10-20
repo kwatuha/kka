@@ -7,7 +7,7 @@ import { navigationCategories } from "@/lib/navigation"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import { filterSidebarItems } from "@/lib/role-menu-filter"
-import { applyTelemedicineScopeToItems } from "@/lib/telemedicine-scope"
+import { applyExperiencePackToItems } from "@/lib/experience-pack-scope"
 import { useNavigation } from "@/lib/navigation-context"
 import { cn } from "@/lib/utils"
 
@@ -27,7 +27,7 @@ export function CategoryLinksBar() {
       menuLoading || !menuAccess
         ? category.items
         : filterSidebarItems(category.items, category.id, menuAccess)
-    return applyTelemedicineScopeToItems(roleFiltered)
+    return applyExperiencePackToItems(roleFiltered)
   }, [activeCategory, menuAccess, menuLoading])
 
   if (items.length === 0) return null

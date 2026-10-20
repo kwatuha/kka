@@ -1,5 +1,24 @@
 # Local development — slow “compiling” on every page
 
+## Which URL is AZ CarePlus (Kakamega)?
+
+| Port | Typical stack | Login URL |
+|------|----------------|-----------|
+| **5400** | `docker compose` in **intellinex-kakamega** (`kakamega_frontend`) | [http://localhost:5400/hmis/login](http://localhost:5400/hmis/login) (use **`/hmis/login`**, not `http://localhost:5400/` — root 404 is normal) |
+| **3100** | Often **legacy IntelliNex** (`intellinex_frontend`) — not this product | Old branding if wrong container |
+| **3100** | Host `npm run dev` in this repo (only if nothing else uses 3100) | [http://localhost:3100/hmis/login](http://localhost:3100/hmis/login) |
+
+Set branding in root `.env` before starting containers:
+
+```bash
+NEXT_PUBLIC_PRODUCT_NAME=AZ CarePlus
+NEXT_PUBLIC_APP_BRAND=AZ CarePlus
+```
+
+After changing `NEXT_PUBLIC_*`, recreate the frontend: `docker compose up -d --force-recreate frontend`.
+
+---
+
 ## What you’re seeing
 
 With **`npm run dev`** (Next.js + Turbopack), routes are **compiled on demand** the first time you open them. That’s normal: there is no built-in “compile every page once” in **dev** mode.
