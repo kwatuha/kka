@@ -41,6 +41,7 @@ export function PatientShrCareEntryBanner({ patientId, nupi, onOpenDocuments }: 
   const [session, setSession] = useState<ShrSession | null>(null)
   const [otp, setOtp] = useState("")
   const [busy, setBusy] = useState(false)
+  const [representativeCrId, setRepresentativeCrId] = useState<string | null>(null)
 
   const apiBase = typeof window !== "undefined" ? getPublicApiBaseUrl() : ""
 
@@ -97,7 +98,13 @@ export function PatientShrCareEntryBanner({ patientId, nupi, onOpenDocuments }: 
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.message || "Failed to start SHR visit")
-      toast({ title: emergency ? "Emergency SHR path" : "OTP sent", description: data.message })
+      setRepresentativeCrId(
+        typeof data.representativeCrId === "string" ? data.representativeCrId : null
+      )
+      toast({
+        title: emergency ? "Emergency SHR path" : data.dependantConsent ? "Guardian OTP sent" : "OTP sent",
+        description: data.message,
+      })
       await load()
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "SHR consent failed"
@@ -188,14 +195,24 @@ export function PatientShrCareEntryBanner({ patientId, nupi, onOpenDocuments }: 
       <AlertTitle className="text-sm">Continue TaifaCare — national SHR consent</AlertTitle>
       <AlertDescription className="space-y-3 text-xs">
         <p>
-          Client Registry matched NUPI <span className="font-mono font-medium">{nupi}</span>. Request patient
-          OTP consent before clinical documentation and national record sharing.
+          Client Registry matched NUPI <span className="font-mono font-medium">{nupi}</span>. Request OTP
+          consent before clinical documentation and national record sharing. For dependants, HMIS sends SHR
+          consent to the linked household head when <span className="font-mono">linkedParentCrId</span> is
+          on file.
         </p>
+        {representativeCrId ? (
+          <p className="text-[10px] text-muted-foreground">
+            OTP routed to representative CR{" "}
+            <span className="font-mono">{representativeCrId}</span>.
+          </p>
+        ) : null}
         {session?.consentStatus === "pending" ? (
           <div className="flex flex-wrap items-end gap-2">
             <div className="min-w-[140px] flex-1">
               <Input
-                placeholder="OTP from patient phone"
+                placeholder={
+                  representativeCrId ? "OTP from guardian phone" : "OTP from patient or guardian phone"
+                }
                 value={otp}
                 onChange={(e) => setOtp(e.target.value)}
                 className="h-9 bg-background"

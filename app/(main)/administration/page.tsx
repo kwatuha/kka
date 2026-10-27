@@ -9,6 +9,7 @@ import { RolesManagement } from "@/components/administration/roles-management"
 import { PrivilegesManagement } from "@/components/administration/privileges-management"
 import { SystemConfiguration } from "@/components/administration/system-configuration"
 import { MpesaSettingsPanel } from "@/components/administration/mpesa-settings-panel"
+import { EtimsSettingsPanel } from "@/components/administration/etims-settings-panel"
 import { IntegrationOutboxPanel } from "@/components/administration/integration-outbox-panel"
 import { AuditLogPanel } from "@/components/administration/audit-log-panel"
 import { BreakGlassReportPanel } from "@/components/administration/break-glass-report-panel"
@@ -136,6 +137,7 @@ export default function AdministrationPage() {
           <AttestationProductGapPanel />
           <SystemConfiguration />
           <MpesaSettingsPanel />
+          <EtimsSettingsPanel />
           <FhirExchangePanel />
           <ReportingClaimsPanel />
           {showComplianceAdminTooling() ? (

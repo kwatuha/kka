@@ -9,6 +9,10 @@ const { enqueueOutboxEvent } = require('../lib/integrationOutbox');
 const { shouldAutoPublish, publishLabObservation } = require('../lib/fhirMediator');
 const { evaluateAndPublish: evaluateIdsr } = require('../lib/idsrPublisher');
 const { getPatientBillingPolicy, waiveInvoiceForExemptCare } = require('../lib/patientBillingPolicy');
+const {
+    enqueueConsultationAfterLabOrderComplete,
+    updateLaboratoryQueueProgressNote,
+} = require('../lib/labConsultationQueue');
 
 /**
  * @route GET /api/laboratory/test-types
@@ -1086,6 +1090,28 @@ router.post('/orders/:id/results', async (req, res) => {
             console.warn('[laboratory] outbox enqueue skipped:', outboxErr.message || outboxErr);
         }
 
+        let labReturnConsultation = null;
+        if (hasValues) {
+            try {
+                labReturnConsultation = await enqueueConsultationAfterLabOrderComplete(connection, {
+                    orderId: id,
+                    userId,
+                    req,
+                });
+                if (
+                    !labReturnConsultation?.enqueued &&
+                    orderMetaForEvents?.patientId
+                ) {
+                    await updateLaboratoryQueueProgressNote(connection, {
+                        orderId: id,
+                        patientId: orderMetaForEvents.patientId,
+                    });
+                }
+            } catch (queueErr) {
+                console.warn('[laboratory] consultation re-queue skipped:', queueErr.message || queueErr);
+            }
+        }
+
         await connection.commit();
 
         let fhirPublish = null;
@@ -1155,7 +1181,11 @@ router.post('/orders/:id/results', async (req, res) => {
             console.error('[SMS] lab result create notify skipped:', smsErr.message || smsErr);
         }
 
-        res.status(201).json({ ...result[0], fhirPublish });
+        res.status(201).json({
+            ...result[0],
+            fhirPublish,
+            labReturnConsultation,
+        });
     } catch (error) {
         await connection.rollback();
         console.error('Error creating lab result:', error);

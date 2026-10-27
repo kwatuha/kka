@@ -80,7 +80,15 @@ async function listOpenVisits(params = {}, settings = null) {
     patient_id: String(crId),
     facility_id: cfg.facilityFrCode,
   });
-  return shrJson('GET', `/shr/open-visits?${q.toString()}`, { settings });
+  const path = `/shr/open-visits?${q.toString()}`;
+  try {
+    return await shrJson('GET', path, { settings });
+  } catch (err) {
+    if (err.status === 404) {
+      return { status: 404, data: { visits: [] } };
+    }
+    throw err;
+  }
 }
 
 /**

@@ -6,6 +6,7 @@ const {
   createQueueEntry,
   checkExistingQueueEntry,
 } = require('../lib/queueService');
+const { enqueueConsultationAfterLabOrderComplete } = require('../lib/labConsultationQueue');
 
 /**
  * Helper function specifically for adding patient to cashier queue
@@ -219,6 +220,64 @@ router.post('/consultation-to-lab', async (req, res) => {
         connection.release();
         console.error('Error creating laboratory queue:', error);
         res.status(500).json({ message: 'Error creating queue entry', error: error.message });
+    }
+});
+
+/**
+ * @route POST /api/workflow/lab-to-consultation
+ * @description When lab work is complete, return patient to consultation (results review)
+ */
+router.post('/lab-to-consultation', async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const { orderId } = req.body;
+        const userId = req.user?.id || req.user?.userId || null;
+
+        if (!orderId) {
+            await connection.rollback();
+            connection.release();
+            return res.status(400).json({ message: 'orderId is required' });
+        }
+
+        const result = await enqueueConsultationAfterLabOrderComplete(connection, {
+            orderId,
+            userId,
+            req,
+        });
+
+        if (!result.enqueued) {
+            await connection.rollback();
+            connection.release();
+            return res.status(400).json({
+                message: 'Consultation queue was not updated — lab order may still have pending results.',
+                ...result,
+            });
+        }
+
+        await connection.commit();
+
+        const [queueEntry] = await connection.execute(
+            `SELECT q.*,
+                    p.firstName as patientFirstName, p.lastName as patientLastName,
+                    p.patientNumber
+             FROM queue_entries q
+             LEFT JOIN patients p ON q.patientId = p.patientId
+             WHERE q.queueId = ?`,
+            [result.queueId],
+        );
+
+        connection.release();
+        res.status(result.updated ? 200 : 201).json({
+            ...(queueEntry[0] || {}),
+            labReturn: true,
+            orderNumber: result.orderNumber,
+        });
+    } catch (error) {
+        await connection.rollback();
+        connection.release();
+        console.error('Error returning patient to consultation after lab:', error);
+        res.status(500).json({ message: 'Error updating consultation queue', error: error.message });
     }
 });
 

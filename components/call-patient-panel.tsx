@@ -18,6 +18,8 @@ import { toast } from "@/components/ui/use-toast"
 import dynamic from "next/dynamic"
 import { useAuth } from "@/lib/auth/auth-context"
 import { queueApi } from "@/lib/api"
+import { isLabReturnConsultationEntry } from "@/lib/queue-lab-return"
+import type { EncounterSaveOutcome } from "@/components/patient-encounter-form"
 import { useServicePoints } from "@/lib/hooks/use-service-points"
 import { Loader2, Pill } from "lucide-react"
 
@@ -103,6 +105,7 @@ export function CallPatientPanel({ servicePoint, staffName, counterNumber = 1 }:
           arrivalTime: entry.arrivalTime || new Date().toISOString(),
           startTime: entry.startTime,
           endTime: entry.endTime,
+          notes: entry.notes ?? "",
         }))
         
         setQueueData(mappedData)
@@ -165,13 +168,21 @@ export function CallPatientPanel({ servicePoint, staffName, counterNumber = 1 }:
       })
       
       if (servicePoint === "consultation") {
+        const pid = String(nextPatient.patientId ?? "").trim()
+        if (!pid) {
+          toast({
+            title: "Missing patient",
+            description: "This queue entry has no patient linked.",
+            variant: "destructive",
+          })
+          return
+        }
         console.log('Setting encounter form to open for patient:', {
-          patientId: nextPatient.patientId,
+          patientId: pid,
           patientName: nextPatient.patientName,
           servicePoint: servicePoint,
           doctorId: currentDoctorId
         })
-        // Use state updater function to ensure it works
         setEncounterFormOpen(true)
         console.log('Encounter form open state set to true')
       } else {
@@ -432,13 +443,26 @@ export function CallPatientPanel({ servicePoint, staffName, counterNumber = 1 }:
               }}
               initialPatientId={currentPatient.patientId}
               initialDoctorId={currentDoctorId}
-              onSuccess={() => {
-                toast({
-                  title: "Encounter Saved",
-                  description: `Encounter for ${currentPatient.patientName} has been saved successfully.`,
-                })
-                // Optionally complete the service after encounter is saved
-                // handleCompleteService()
+              initialConsultationQueueId={currentPatient.id}
+              labReturnReview={isLabReturnConsultationEntry((currentPatient as { notes?: string }).notes)}
+              onSuccess={async (outcome?: EncounterSaveOutcome) => {
+                const served = currentPatient
+                if (!outcome?.sentToLab) {
+                  toast({
+                    title: outcome?.labReturnReview ? "Results review saved" : "Encounter Saved",
+                    description: `Encounter for ${served.patientName} has been saved successfully.`,
+                  })
+                }
+                setEncounterFormOpen(false)
+                if (!outcome?.sentToLab && served?.id) {
+                  try {
+                    await queueApi.updateStatus(served.id, "completed")
+                  } catch (queueErr: any) {
+                    console.warn("Could not mark queue entry completed:", queueErr)
+                  }
+                }
+                setCurrentPatient(null)
+                setRefreshTrigger((prev) => prev + 1)
               }}
             />
           </>

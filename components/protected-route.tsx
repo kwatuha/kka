@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { useAuth } from "@/lib/auth/auth-context"
 import { Loader2 } from "lucide-react"
+import { FacilityLogoMark } from "@/components/facility-logo-mark"
 
 interface ProtectedRouteProps {
   children: React.ReactNode
@@ -26,10 +27,11 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   // Show loading state while checking authentication
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex h-screen flex-col items-center justify-center gap-6 bg-slate-50 px-4">
+        <FacilityLogoMark className="max-h-12 w-auto max-w-[min(100%,14rem)]" />
         <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
-          <p className="text-sm text-muted-foreground">Loading...</p>
+          <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-[#0f4c75]" />
+          <p className="text-sm text-muted-foreground">Loading your session…</p>
         </div>
       </div>
     )

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -63,6 +63,15 @@ import {
   type QueueEntryLite,
 } from "@/components/queue-radiology-report-dialog"
 import { ProcedureQueueCompleteDialog } from "@/components/queue-procedure-complete-dialog"
+import {
+  type ConsultationQueueOriginFilter,
+  isLabReturnConsultationEntry,
+  labReturnOrderLabel,
+  labReturnProgressLabel,
+  matchesConsultationOriginFilter,
+} from "@/lib/queue-lab-return"
+import { cn } from "@/lib/utils"
+import type { EncounterSaveOutcome } from "@/components/patient-encounter-form"
 
 const ALL_SERVICE_POINTS = [
   { value: "triage", label: "Triage" },
@@ -100,6 +109,8 @@ export default function QueueManagement() {
   const [searchQuery, setSearchQuery] = useState("")
   const [servicePointFilter, setServicePointFilter] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
+  const [consultationLabFilter, setConsultationLabFilter] =
+    useState<ConsultationQueueOriginFilter>("all")
   const [addQueueOpen, setAddQueueOpen] = useState(false)
   const [editingQueue, setEditingQueue] = useState<any>(null)
   const [deletingQueue, setDeletingQueue] = useState<any>(null)
@@ -109,8 +120,14 @@ export default function QueueManagement() {
   const [statusLoading, setStatusLoading] = useState(false)
   const [viewingBill, setViewingBill] = useState<any>(null)
   const [encounterFormOpen, setEncounterFormOpen] = useState(false)
-  const [selectedPatientForEncounter, setSelectedPatientForEncounter] = useState<{ patientId: string; patientName: string } | null>(null)
+  const [selectedPatientForEncounter, setSelectedPatientForEncounter] = useState<{
+    patientId: string
+    patientName: string
+    queueId?: number | string
+    labReturnReview?: boolean
+  } | null>(null)
   const [encountersToday, setEncountersToday] = useState<Record<string, boolean>>({})
+  const encounterUnmountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [currentDoctorId, setCurrentDoctorId] = useState<string | undefined>()
   const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false)
   const [selectedPatientForDispense, setSelectedPatientForDispense] = useState<{ patientId: number; patientName: string } | null>(null)
@@ -353,13 +370,32 @@ export default function QueueManagement() {
   }
 
   const handleStartConsultation = (queue: any) => {
-    const patientId = queue.patientId?.toString() || ""
+    const patientId = queue.patientId?.toString().trim() || ""
     const patientName = queue.patientFirstName && queue.patientLastName
       ? `${queue.patientFirstName} ${queue.patientLastName}`
       : "Unknown Patient"
 
+    if (!patientId) {
+      toast({
+        title: "Missing patient",
+        description: "This queue entry has no patient linked. Choose another ticket or fix the queue entry.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (encounterUnmountTimerRef.current) {
+      clearTimeout(encounterUnmountTimerRef.current)
+      encounterUnmountTimerRef.current = null
+    }
+
     console.log('Starting consultation for:', { patientId, patientName })
-    setSelectedPatientForEncounter({ patientId, patientName })
+    setSelectedPatientForEncounter({
+      patientId,
+      patientName,
+      queueId: queue.queueId,
+      labReturnReview: isLabReturnConsultationEntry(queue.notes),
+    })
     setEncounterFormOpen(true)
   }
 
@@ -538,10 +574,13 @@ export default function QueueManagement() {
 
       const matchesServicePoint = !servicePointFilter || queue.servicePoint === servicePointFilter
       const matchesStatus = !statusFilter || queue.status === statusFilter
+      const matchesLabReturn =
+        servicePointFilter !== "consultation" ||
+        matchesConsultationOriginFilter(queue.notes, consultationLabFilter)
 
-      return matchesSearch && matchesServicePoint && matchesStatus
+      return matchesSearch && matchesServicePoint && matchesStatus && matchesLabReturn
     })
-  }, [isMounted, queues, searchQuery, servicePointFilter, statusFilter])
+  }, [isMounted, queues, searchQuery, servicePointFilter, statusFilter, consultationLabFilter])
 
   // Calculate wait time in minutes - only calculate on client
   const calculateWaitTime = (queue: any) => {
@@ -690,6 +729,30 @@ export default function QueueManagement() {
                 </div>
               )}
 
+              {servicePointFilter === "consultation" && (
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Consultation view:</span>
+                  {(
+                    [
+                      { id: "all" as const, label: "All" },
+                      { id: "lab_return" as const, label: "From lab (results ready)" },
+                      { id: "other" as const, label: "Other" },
+                    ] as const
+                  ).map((opt) => (
+                    <Button
+                      key={opt.id}
+                      type="button"
+                      size="sm"
+                      variant={consultationLabFilter === opt.id ? "default" : "outline"}
+                      className="h-8 text-xs"
+                      onClick={() => setConsultationLabFilter(opt.id)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+              )}
+
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
@@ -718,8 +781,17 @@ export default function QueueManagement() {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      memoizedFilteredQueues.map((queue) => (
-                        <TableRow key={queue.queueId}>
+                      memoizedFilteredQueues.map((queue) => {
+                        const fromLab =
+                          queue.servicePoint === "consultation" &&
+                          isLabReturnConsultationEntry(queue.notes)
+                        const labOrderRef = labReturnOrderLabel(queue.notes)
+                        const labProgress = labReturnProgressLabel(queue.notes)
+                        return (
+                        <TableRow
+                          key={queue.queueId}
+                          className={cn(fromLab && "bg-sky-50/80 dark:bg-sky-950/20 border-l-4 border-l-sky-500")}
+                        >
                           <TableCell className="font-medium">{queue.ticketNumber}</TableCell>
                           <TableCell>
                             {queue.patientFirstName && queue.patientLastName
@@ -728,6 +800,17 @@ export default function QueueManagement() {
                             {queue.patientNumber && (
                               <div className="text-xs text-muted-foreground">{queue.patientNumber}</div>
                             )}
+                            {fromLab ? (
+                              <Badge
+                                variant="outline"
+                                className="mt-1 text-[10px] border-sky-400 text-sky-800"
+                              >
+                                <FlaskConical className="h-3 w-3 mr-1" />
+                                Lab results ready
+                                {labProgress ? ` · ${labProgress}` : ""}
+                                {labOrderRef ? ` · ${labOrderRef}` : ""}
+                              </Badge>
+                            ) : null}
                           </TableCell>
                           <TableCell>
                             {servicePoints.find((sp) => sp.value === queue.servicePoint)?.label || queue.servicePoint}
@@ -776,7 +859,12 @@ export default function QueueManagement() {
                                 )}
                                 {queue.servicePoint === "consultation" && (
                                   <DropdownMenuItem onClick={() => handleStartConsultation(queue)}>
-                                    {encountersToday[queue.patientId?.toString() || ""] ? (
+                                    {fromLab ? (
+                                      <>
+                                        <FlaskConical className="mr-2 h-4 w-4" />
+                                        Review lab results
+                                      </>
+                                    ) : encountersToday[queue.patientId?.toString() || ""] ? (
                                       <>
                                         <FileText className="mr-2 h-4 w-4" />
                                         Continue Consultation
@@ -855,7 +943,8 @@ export default function QueueManagement() {
                             </DropdownMenu>
                           </TableCell>
                         </TableRow>
-                      ))
+                        )
+                      })
                     )}
                   </TableBody>
                 </Table>
@@ -1103,29 +1192,54 @@ export default function QueueManagement() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Patient Encounter Form */}
-      {selectedPatientForEncounter && (
+      {/* Patient Encounter Form — keep mounted briefly after close so the dialog can unmount cleanly */}
+      {(encounterFormOpen || selectedPatientForEncounter) && selectedPatientForEncounter && (
         <PatientEncounterForm
           open={encounterFormOpen}
           onOpenChange={(open) => {
             setEncounterFormOpen(open)
-            if (!open) {
-              setSelectedPatientForEncounter(null)
+            if (open) {
+              if (encounterUnmountTimerRef.current) {
+                clearTimeout(encounterUnmountTimerRef.current)
+                encounterUnmountTimerRef.current = null
+              }
+              return
             }
+            if (encounterUnmountTimerRef.current) {
+              clearTimeout(encounterUnmountTimerRef.current)
+            }
+            encounterUnmountTimerRef.current = window.setTimeout(() => {
+              setSelectedPatientForEncounter(null)
+              encounterUnmountTimerRef.current = null
+            }, 320)
           }}
           initialPatientId={selectedPatientForEncounter.patientId}
           initialDoctorId={currentDoctorId}
-          onSuccess={() => {
-            toast({
-              title: "Encounter Saved",
-              description: `Encounter for ${selectedPatientForEncounter.patientName} has been saved successfully.`,
-            })
-            // Update encounter status
+          initialConsultationQueueId={selectedPatientForEncounter.queueId}
+          labReturnReview={selectedPatientForEncounter.labReturnReview}
+          onSuccess={async (outcome?: EncounterSaveOutcome) => {
+            const saved = selectedPatientForEncounter
+            if (!outcome?.sentToLab) {
+              toast({
+                title: outcome?.labReturnReview ? "Results review saved" : "Encounter Saved",
+                description: `Encounter for ${saved.patientName} has been saved successfully.`,
+              })
+            }
             setEncountersToday(prev => ({
               ...prev,
-              [selectedPatientForEncounter.patientId]: true
+              [saved.patientId]: true,
             }))
-            // Refresh queue data
+            if (outcome?.sentToLab) {
+              loadQueues()
+              return
+            }
+            if (saved.queueId != null && saved.queueId !== "") {
+              try {
+                await queueApi.updateStatus(String(saved.queueId), "completed")
+              } catch (queueErr: any) {
+                console.warn("Could not mark queue entry completed:", queueErr)
+              }
+            }
             loadQueues()
             loadAllQueues()
           }}

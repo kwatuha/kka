@@ -37,6 +37,7 @@ export function PatientShrConsentCard({ patientId }: { patientId: string }) {
   const [shrReady, setShrReady] = useState<boolean | null>(null)
   const [closeOtpRecord, setCloseOtpRecord] = useState<string | null>(null)
   const [closeOtp, setCloseOtp] = useState("")
+  const [representativeCrId, setRepresentativeCrId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -80,7 +81,13 @@ export function PatientShrConsentCard({ patientId }: { patientId: string }) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.message || "Failed to start SHR visit")
-      toast({ title: emergency ? "Emergency SHR path" : "OTP requested", description: data.message })
+      setRepresentativeCrId(
+        typeof data.representativeCrId === "string" ? data.representativeCrId : null
+      )
+      toast({
+        title: emergency ? "Emergency SHR path" : data.dependantConsent ? "Guardian OTP requested" : "OTP requested",
+        description: data.message,
+      })
       await load()
       if (data.sessionId && data.consentStatus === "pending") {
         setSession({
@@ -235,8 +242,9 @@ export function PatientShrConsentCard({ patientId }: { patientId: string }) {
           National SHR consent (visit)
         </CardTitle>
         <CardDescription>
-          Request OTP consent before reading the Shared Health Record. Approved consent also unlocks live
-          SHR publish when SHR_REQUIRE_CONSENT_FOR_PUBLISH is enabled on the server.
+          Request OTP consent before reading the Shared Health Record. For dependants with a linked household
+          head, OTP is sent to the parent/guardian CR on file. Approved consent also unlocks live SHR publish
+          when SHR_REQUIRE_CONSENT_FOR_PUBLISH is enabled on the server.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -271,10 +279,18 @@ export function PatientShrConsentCard({ patientId }: { patientId: string }) {
                 </Button>
               </div>
             ) : null}
+            {representativeCrId ? (
+              <p className="text-[10px] text-muted-foreground">
+                Consent OTP sent to representative{" "}
+                <span className="font-mono">{representativeCrId}</span>.
+              </p>
+            ) : null}
             {session?.consentStatus === "pending" ? (
               <div className="flex flex-wrap items-end gap-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">Patient OTP</Label>
+                  <Label className="text-xs">
+                    {representativeCrId ? "Guardian OTP" : "Patient / guardian OTP"}
+                  </Label>
                   <Input
                     className="max-w-[140px]"
                     value={otp}

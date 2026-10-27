@@ -34,16 +34,33 @@ async function getActiveSessionForPatient(patientId) {
   return rows[0] || null;
 }
 
-async function loadPatientCrId(patientId) {
+async function loadPatientShrContext(patientId) {
   const [rows] = await pool.execute(
-    `SELECT patientId, nupi, idNumber FROM patients WHERE patientId = ? AND voided = 0 LIMIT 1`,
+    `SELECT patientId, nupi, idNumber, idType, linkedParentCrId
+     FROM patients WHERE patientId = ? AND voided = 0 LIMIT 1`,
     [Number(patientId)]
   );
   const row = rows[0];
   if (!row?.nupi) {
     throw new Error('Patient has no NUPI (CR ID). Resolve Client Registry before SHR consent.');
   }
-  return String(row.nupi);
+  let linkedParentCrId = row.linkedParentCrId ? String(row.linkedParentCrId).trim() : null;
+  if (!linkedParentCrId) {
+    try {
+      const { resolveShaMemberCrForPatient } = require('./shaPatientMemberCr');
+      const member = await resolveShaMemberCrForPatient(pool, row);
+      linkedParentCrId = member.linkedParentCrId ? String(member.linkedParentCrId).trim() : null;
+    } catch {
+      /* optional CR refresh */
+    }
+  }
+  const isDependantLike =
+    Boolean(linkedParentCrId) || /birth certificate/i.test(String(row.idType || ''));
+  return {
+    crId: String(row.nupi),
+    linkedParentCrId,
+    isDependantLike,
+  };
 }
 
 /**
@@ -57,10 +74,27 @@ async function startShrVisit({
   practitionerPuid = null,
   emergency = false,
   incapacityReason = null,
+  representativeCrId = null,
+  representativeRelationship = null,
 }) {
   const practitioner_id = practitionerPuid || undefined;
   const cfg = getShrConfig();
-  const crId = await loadPatientCrId(patientId);
+  const shrPatient = await loadPatientShrContext(patientId);
+  const crId = shrPatient.crId;
+  const autoRepresentative =
+    !emergency &&
+    !representativeCrId &&
+    shrPatient.linkedParentCrId &&
+    shrPatient.linkedParentCrId.toUpperCase() !== crId.toUpperCase()
+      ? shrPatient.linkedParentCrId
+      : null;
+  const effectiveRepresentative =
+    representativeCrId != null && String(representativeCrId).trim() !== ''
+      ? String(representativeCrId).trim()
+      : autoRepresentative;
+  const repRelationship =
+    representativeRelationship ||
+    (effectiveRepresentative ? 'Principal' : null);
 
   const open = await listOpenVisits({ crId });
   const visits = open?.data?.visits || open?.data?.visit || [];
@@ -126,7 +160,12 @@ async function startShrVisit({
     };
   }
 
-  const req = await requestShrConsent({ crId, visit_type: visitType, practitioner_id });
+  const consentBody = { crId, visit_type: visitType, practitioner_id };
+  if (effectiveRepresentative) {
+    consentBody.representative_cr_id = effectiveRepresentative;
+    consentBody.representative_relationship = repRelationship || 'Principal';
+  }
+  const req = await requestShrConsent(consentBody);
   const data = req.data || {};
   const [ins] = await pool.execute(
     `INSERT INTO shr_visit_sessions
@@ -148,7 +187,13 @@ async function startShrVisit({
     consentId: data.consent_id,
     otpRecord: data.otp_record,
     consentStatus: 'pending',
-    message: data.message || 'OTP sent to patient',
+    representativeCrId: effectiveRepresentative || null,
+    dependantConsent: Boolean(effectiveRepresentative),
+    message:
+      data.message ||
+      (effectiveRepresentative
+        ? 'OTP sent to household representative (parent/guardian)'
+        : 'OTP sent to patient'),
   };
 }
 

@@ -176,6 +176,13 @@ export function PatientShaEligibilityCard({
   const [contacts, setContacts] = useState<
     Array<{ contactId: string; contactValue?: string | null; contactType?: string | null }>
   >([])
+  const [dependantContactsHint, setDependantContactsHint] = useState<Record<
+    string,
+    unknown
+  > | null>(null)
+  const [contactsLoaded, setContactsLoaded] = useState(false)
+  /** National default contact when contact_id omitted on POST /claims/otp */
+  const CLAIMS_DEFAULT_CONTACT = "__default__"
   const [selectedContactId, setSelectedContactId] = useState("")
   const [claimsSession, setClaimsSession] = useState<Record<string, unknown> | null>(null)
   const [claimsOtp, setClaimsOtp] = useState("")
@@ -1026,8 +1033,27 @@ export function PatientShaEligibilityCard({
       if (!res.ok) throw new Error(String(data.message || data.error || "Contacts failed"))
       const list = Array.isArray(data.contacts) ? data.contacts : []
       setContacts(list)
-      setSelectedContactId(list[0]?.contactId || "")
-      toast({ title: "Contacts loaded", description: `${list.length} contact(s) from CR` })
+      setDependantContactsHint(
+        (data.dependantContactsHint as Record<string, unknown> | undefined) ?? null
+      )
+      setContactsLoaded(true)
+      setSelectedContactId(list[0]?.contactId || CLAIMS_DEFAULT_CONTACT)
+      if (list.length) {
+        toast({ title: "Contacts loaded", description: `${list.length} contact(s) from CR` })
+      } else if (data.dependantContactsHint) {
+        toast({
+          title: "No contacts listed for dependant NUPI",
+          description:
+            "Try Send claims OTP with default contact, or ask DHA to link guardian phones on this CR.",
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "No contacts returned",
+          description: "National CR has no phone contacts for this member.",
+          variant: "destructive",
+        })
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Contacts failed"
       toast({ title: "Contacts failed", description: msg, variant: "destructive" })
@@ -1037,7 +1063,9 @@ export function PatientShaEligibilityCard({
   }
 
   const sendClaimsOtp = async () => {
-    if (!selectedContactId) {
+    const useDefaultContact =
+      !selectedContactId || selectedContactId === CLAIMS_DEFAULT_CONTACT
+    if (!useDefaultContact && !selectedContactId) {
       toast({ title: "Select a contact", variant: "destructive" })
       return
     }
@@ -1057,7 +1085,7 @@ export function PatientShaEligibilityCard({
         body: JSON.stringify({
           patientId: Number(patientId),
           memberCrNumber: memberCrForBenefits,
-          contactId: selectedContactId,
+          ...(useDefaultContact ? {} : { contactId: selectedContactId }),
           serviceType: visitServiceType,
           subBenefitCode: selectedSubBenefit || undefined,
           interventionCode: selectedInterventionCode,
@@ -1959,8 +1987,17 @@ export function PatientShaEligibilityCard({
     (Boolean(result) && !isError && Boolean(selectedSubBenefit)) ||
     Boolean(
       claimsSession &&
-        ["otp_sent", "ready_for_visit", "visit_active"].includes(String(claimsSession.sessionStatus))
+        (claimsSession.subBenefitCode ||
+          claimsSession.interventionCode ||
+          ["otp_sent", "ready_for_visit", "visit_active"].includes(String(claimsSession.sessionStatus)))
     )
+
+  const showPreauthControls =
+    Boolean(selectedInterventionCode) &&
+    (needsPreauthFlag ||
+      visitActive ||
+      Boolean(claimsSession?.interventionCode && selectedInterventionCode))
+  const preauthControlsLocked = !visitActive || claimsBusy || Boolean(claimRef)
 
   const submitReadinessChecklist = (
     <div
@@ -2082,8 +2119,9 @@ export function PatientShaEligibilityCard({
         {guardianIncomplete ? (
           <p className="rounded-md border border-amber-300/80 bg-amber-50/90 px-2 py-1.5 text-[10px] text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
             Patient is under 18 ({ageYearsFromDateOfBirth(dateOfBirth)} yrs). Add{" "}
-            <strong>parent or guardian</strong> name and phone on the patient record (next of kin) —
-            national claims OTP and consent often use the registered contact.
+            <strong>parent or guardian</strong> on next of kin for local records. National claims OTP uses{" "}
+            <strong>GET /patients/contacts</strong> on the dependant NUPI (guardian phones should appear
+            there); SHR consent uses the linked household head automatically.
           </p>
         ) : null}
         {!effectiveNupi && isDependantIdType(idType) ? (
@@ -2758,8 +2796,10 @@ export function PatientShaEligibilityCard({
             </div>
             <p className="font-sans text-[10px] text-muted-foreground">
               Uses <strong>claims</strong> OTP (not SHR consent — that card cannot start a funded visit).
-              Order: pick <strong>intervention</strong> → load contacts → <strong>Send claims OTP</strong> (SMS to
-              CR phone) → enter SMS code → Start visit. UAT without SMS: request{" "}
+              Order: pick <strong>intervention</strong> → load contacts → <strong>Send claims OTP</strong>. For
+              dependants, guardian numbers should appear when loading contacts on the{" "}
+              <strong>dependant NUPI</strong> (not the parent chart). You may omit a specific contact to use
+              the national default. UAT without SMS: request{" "}
               <a
                 href="https://hie-docs.dha.go.ke/docs/consent/process/createOTPWhitelistRequest"
                 target="_blank"
@@ -2782,12 +2822,15 @@ export function PatientShaEligibilityCard({
               >
                 Load contacts
               </Button>
-              {contacts.length ? (
+              {contactsLoaded ? (
                 <Select value={selectedContactId} onValueChange={setSelectedContactId}>
-                  <SelectTrigger className="h-9 w-[200px] bg-background">
+                  <SelectTrigger className="h-9 w-[220px] bg-background">
                     <SelectValue placeholder="Contact" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={CLAIMS_DEFAULT_CONTACT}>
+                      Primary / default (omit contact_id)
+                    </SelectItem>
                     {contacts.map((c) => (
                       <SelectItem key={c.contactId} value={c.contactId}>
                         {c.contactValue || c.contactId}
@@ -2800,12 +2843,50 @@ export function PatientShaEligibilityCard({
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={claimsBusy || !selectedContactId}
+                disabled={claimsBusy || !contactsLoaded || !selectedInterventionCode}
                 onClick={() => void sendClaimsOtp()}
               >
                 Send claims OTP
               </Button>
             </div>
+            {contactsLoaded && contacts.length === 0 && dependantContactsHint ? (
+              <div className="rounded-md border border-amber-400/80 bg-amber-50/90 px-3 py-2 text-[10px] leading-snug text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                <p className="font-semibold">Dependant — no contacts returned yet</p>
+                <p className="mt-1">
+                  NUPI{" "}
+                  <span className="font-mono">
+                    {String(dependantContactsHint.memberCrNumber || memberCrForBenefits || "—")}
+                  </span>{" "}
+                  returned zero rows from{" "}
+                  <a
+                    href="https://hie-docs.dha.go.ke/docs/consent/process/getBeneficiaryValidContact"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                  >
+                    Get Beneficiary Valid Contact
+                  </a>
+                  . DHA should expose parent/guardian phones on this query (same{" "}
+                  <span className="font-mono">patient_id</span>). You can still try{" "}
+                  <strong>Send claims OTP</strong> with the default contact, or use SHR consent (routes
+                  OTP to household head when linked).
+                </p>
+                {dependantContactsHint.linkedParentCrId ? (
+                  <p className="mt-1 text-muted-foreground">
+                    Household head{" "}
+                    <span className="font-mono">{String(dependantContactsHint.linkedParentCrId)}</span>
+                    {dependantContactsHint.parentContactCount
+                      ? ` has ${String(dependantContactsHint.parentContactCount)} contact(s) on its own CR (e.g. ${String(dependantContactsHint.parentContactSample || "phone")}) — do not reuse that contact_id here; wait for guardian rows on the dependant contacts list.`
+                      : " also has no contacts on UAT."}
+                  </p>
+                ) : null}
+                <p className="mt-2">
+                  <strong>UAT unblock:</strong> email{" "}
+                  <span className="font-mono">afyaconnect.dha@gmail.com</span> to link guardian contact
+                  data on dependant CR or OTP-whitelist the NUPI, then reload contacts.
+                </p>
+              </div>
+            ) : null}
             {!visitActive ? (
               <div className="space-y-2">
                 {(result?.facilityBiometricsEnforced === true ||
@@ -2878,6 +2959,35 @@ export function PatientShaEligibilityCard({
                 </div>
               </div>
             ) : null}
+            {showPreauthControls && !visitActive ? (
+              <div className="rounded-md border border-amber-300/80 bg-amber-50/60 p-2 dark:border-amber-900 dark:bg-amber-950/30">
+                <p className="font-sans text-[10px] font-medium text-amber-950 dark:text-amber-100">
+                  Pre-authorization (step 4)
+                </p>
+                <p className="mt-1 text-[10px] text-muted-foreground leading-snug">
+                  <strong>Request preauth</strong> unlocks after{" "}
+                  <strong>Send claims OTP</strong> and a successful{" "}
+                  <strong>Start SHA visit</strong> (national visit id on the session). The type and button
+                  appear enabled in this section once the visit is active.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Select value={preauthType} onValueChange={setPreauthType} disabled>
+                    <SelectTrigger className="h-9 w-[130px] bg-background text-[10px] opacity-70">
+                      <SelectValue placeholder="Preauth type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="normal">Preauth normal</SelectItem>
+                      <SelectItem value="surgical">Preauth surgical</SelectItem>
+                      <SelectItem value="oncology">Preauth oncology</SelectItem>
+                      <SelectItem value="elective">Preauth elective</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button type="button" size="sm" variant="outline" disabled>
+                    Request preauth
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             {visitActive ? (
               <div className="flex flex-wrap items-center gap-2 border-t border-emerald-200/60 pt-2">
                 <Badge variant="outline" className="text-[10px] font-normal">
@@ -2896,40 +3006,44 @@ export function PatientShaEligibilityCard({
                     Claim {claimRef}
                   </Badge>
                 ) : null}
-                <Select
-                  value={preauthType}
-                  onValueChange={setPreauthType}
-                  disabled={claimsBusy || Boolean(claimRef)}
-                >
-                  <SelectTrigger className="h-9 w-[130px] bg-background text-[10px]">
-                    <SelectValue placeholder="Preauth type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="normal">Preauth normal</SelectItem>
-                    <SelectItem value="surgical">Preauth surgical</SelectItem>
-                    <SelectItem value="oncology">Preauth oncology</SelectItem>
-                    <SelectItem value="elective">Preauth elective</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={claimsBusy || Boolean(claimRef)}
-                  onClick={() => void requestPreauth()}
-                >
-                  Request preauth
-                </Button>
-                {preauthRef ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={claimsBusy || Boolean(claimRef)}
-                    onClick={() => void cancelPreauth()}
-                  >
-                    Cancel preauth
-                  </Button>
+                {showPreauthControls ? (
+                  <>
+                    <Select
+                      value={preauthType}
+                      onValueChange={setPreauthType}
+                      disabled={preauthControlsLocked}
+                    >
+                      <SelectTrigger className="h-9 w-[130px] bg-background text-[10px]">
+                        <SelectValue placeholder="Preauth type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="normal">Preauth normal</SelectItem>
+                        <SelectItem value="surgical">Preauth surgical</SelectItem>
+                        <SelectItem value="oncology">Preauth oncology</SelectItem>
+                        <SelectItem value="elective">Preauth elective</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={preauthControlsLocked}
+                      onClick={() => void requestPreauth()}
+                    >
+                      Request preauth
+                    </Button>
+                    {preauthRef ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={preauthControlsLocked}
+                        onClick={() => void cancelPreauth()}
+                      >
+                        Cancel preauth
+                      </Button>
+                    ) : null}
+                  </>
                 ) : null}
                 <Button
                   type="button"

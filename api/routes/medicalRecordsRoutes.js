@@ -403,17 +403,20 @@ router.put('/:id', async (req, res) => {
             return String(req.body[key] ?? '') !== String(prior[key] ?? '');
         });
         const reasonText = String(amendmentReason || '').trim();
-        const visitDay = existing[0].visitDate
-            ? String(existing[0].visitDate).slice(0, 10)
-            : null;
-        const todayIso = new Date().toISOString().slice(0, 10);
-        const sameDayOpenEncounter =
-            encounterInProgress && visitDay === todayIso && !existing[0].outcome;
+        const visitAlreadyCompleted = Boolean(String(prior.outcome || '').trim());
+        const sameDayInProgressEncounter =
+            encounterInProgress &&
+            prior.visitDate &&
+            String(prior.visitDate).slice(0, 10) === new Date().toISOString().slice(0, 10) &&
+            !visitAlreadyCompleted;
+        const exemptFromAmendmentReason = !visitAlreadyCompleted || sameDayInProgressEncounter;
 
-        if (clinicalChanged && !reasonText && !sameDayOpenEncounter) {
+        if (clinicalChanged && !reasonText && !exemptFromAmendmentReason) {
             await connection.rollback();
             return res.status(400).json({
-                message: 'amendmentReason is required when changing diagnosis, treatment, or other clinical narrative',
+                code: 'AMENDMENT_REASON_REQUIRED',
+                message:
+                    'This visit was already completed. Enter a brief amendment reason (for the audit log) when changing diagnosis, treatment, or other clinical notes.',
             });
         }
 

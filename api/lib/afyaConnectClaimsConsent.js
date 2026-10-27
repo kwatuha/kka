@@ -128,8 +128,8 @@ async function sendClaimsOtp({
 }) {
   const mode = resolveMode();
   if (mode === 'disabled') return { mode, skipped: true };
-  if (!patientCrId || !contactId) {
-    return { mode, error: 'patientCrId and contactId required' };
+  if (!patientCrId) {
+    return { mode, error: 'patientCrId required' };
   }
   const codes = normalizeInterventionCodes(interventionCodes, interventionCode);
 
@@ -138,7 +138,7 @@ async function sendClaimsOtp({
     return {
       mode: 'sandbox',
       patientCrId,
-      contactId: String(contactId),
+      contactId: contactId != null ? String(contactId) : 'default',
       otpRecord,
       message: 'Sandbox OTP sent — enter any 6 digits on Start visit in demo, or use DHA test OTP if documented',
     };
@@ -163,8 +163,10 @@ async function sendClaimsOtp({
   const body = {
     patient_id: String(patientCrId),
     intervention_codes: codes,
-    contact_id: Number.isFinite(Number(contactId)) ? Number(contactId) : contactId,
   };
+  if (contactId != null && String(contactId).trim() !== '') {
+    body.contact_id = Number.isFinite(Number(contactId)) ? Number(contactId) : contactId;
+  }
   if (serviceType) body.service_type = String(serviceType);
 
   const res = await afyaConnectFetch(url, {
@@ -208,7 +210,7 @@ async function sendClaimsOtp({
     mode: 'live',
     httpStatus: res.status,
     patientCrId,
-    contactId: String(contactId),
+    contactId: contactId != null ? String(contactId) : null,
     otpRecord: otpRecord != null ? String(otpRecord) : null,
     /** UAT middleware often returns OTP in message body (not SMS) — for clinician testing only */
     uatOtpHint: uatOtpInMessage ? uatOtpInMessage[1] : null,

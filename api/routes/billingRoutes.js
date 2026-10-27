@@ -8,9 +8,11 @@ const { notifyPaymentReceived } = require('../lib/patientSms');
 const { createConsultationQueueFromTriage } = require('../lib/queueService');
 const { resolveFacilityScope } = require('../lib/branchContext');
 const mpesaRoutes = require('./mpesaRoutes');
+const etimsRoutes = require('./etimsRoutes');
 
 // Cloudsasa M-Pesa STK (initiate + public callback) — docs/MPESA_STK_INTEGRATION_GUIDE.md
 router.use('/mpesa', mpesaRoutes);
+router.use('/etims', etimsRoutes);
 
 /**
  * Resolve unit price for an invoice line item (uses shared resolver; no ward override).

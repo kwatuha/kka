@@ -78,9 +78,10 @@ export default function LoginPage() {
 
   if (isLoading || (isAuthenticated && pathname === "/login") || isRedirecting) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50">
-        <div className="space-y-4 text-center">
-          <Loader2 className="mx-auto h-12 w-12 animate-spin text-[#0f4c75]" />
+      <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-slate-50 px-4">
+        <FacilityLogoMark className="max-h-12 w-auto max-w-[min(100%,14rem)]" />
+        <div className="space-y-3 text-center">
+          <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#0f4c75]" />
           <p className="text-sm font-medium text-slate-600">Securely logging you in…</p>
         </div>
       </div>

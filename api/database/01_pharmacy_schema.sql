@@ -6,6 +6,7 @@
 CREATE TABLE IF NOT EXISTS medications (
     medicationId INT NOT NULL AUTO_INCREMENT,
     medicationCode VARCHAR(50) UNIQUE,
+    hptCode VARCHAR(32) NULL COMMENT 'Kenya HPT catalog code',
     name VARCHAR(200) NOT NULL,
     genericName VARCHAR(200),
     dosageForm VARCHAR(100), -- Tablet, Capsule, Syrup, Injection, etc.
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS prescription_items (
     prescriptionId INT NOT NULL,
     medicationId INT,
     medicationName VARCHAR(200) NOT NULL, -- Store name in case medication is deleted
+    hptCode VARCHAR(32) NULL COMMENT 'HPT code at time of prescribing',
     dosage VARCHAR(200) NOT NULL, -- e.g., "1 tablet"
     frequency VARCHAR(100) NOT NULL, -- e.g., "3 times daily", "twice daily"
     duration VARCHAR(100) NOT NULL, -- e.g., "7 days", "2 weeks"

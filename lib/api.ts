@@ -43,6 +43,38 @@ export type MpesaAdminSettings = {
   updatedAt?: string;
 };
 
+export type EtimsReadinessCheck = {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail?: string | null;
+};
+
+export type EtimsAdminSettings = {
+  settingId?: number;
+  enabled: boolean;
+  integrationMode: 'disabled' | 'oscu' | 'vscu';
+  environment: 'sandbox' | 'production';
+  kraPin?: string | null;
+  branchOfficeId?: string | null;
+  deviceSerialNumber?: string | null;
+  traderName?: string | null;
+  apiBaseUrl?: string | null;
+  effectiveApiBaseUrl?: string;
+  vscuLocalBaseUrl?: string | null;
+  communicationKeyConfigured?: boolean;
+  communicationKeyHint?: string | null;
+  defaultTaxRateCode?: string | null;
+  autoSubmitOnInvoicePaid: boolean;
+  notes?: string | null;
+  updatedAt?: string;
+  readiness?: {
+    checks: EtimsReadinessCheck[];
+    readyForDev: boolean;
+    message?: string;
+  };
+};
+
 export type MpesaRegisterResponse = {
   page: number;
   limit: number;
@@ -75,10 +107,16 @@ function parseFailedResponseBodyText(rawText: string, status: number, statusText
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
     if (parsed && typeof parsed === 'object') {
+      const message = [parsed.message, parsed.msg].find(
+        (v) => typeof v === 'string' && v.trim()
+      ) as string | undefined;
+      const detail = typeof parsed.error === 'string' ? parsed.error.trim() : '';
+      if (message && detail && message !== detail) {
+        return `${message}: ${detail}`;
+      }
       return (
-        (parsed.error as string) ||
-        (parsed.message as string) ||
-        (parsed.msg as string) ||
+        detail ||
+        message ||
         `HTTP error! status: ${status}`
       );
     }
@@ -357,7 +395,27 @@ export const patientApi = {
     apiRequest<any[]>(`/api/patients?${new URLSearchParams({ page: page.toString(), limit: limit.toString(), ...(search && { search }) })}`),
 
   getById: (id: string) =>
-    apiRequest<any>(`/api/patients/${id}`),
+    apiRequest<any>(`/api/patients/${id}`, { timeoutMs: 45_000 }),
+
+  getHousehold: (id: string) =>
+    apiRequest<{
+      householdHeadCr: string | null
+      householdNumber?: string | null
+      members: Array<{
+        patientId: number
+        patientNumber: string
+        name: string
+        dateOfBirth?: string | null
+        gender?: string | null
+        idType?: string | null
+        idNumber?: string | null
+        nupi?: string | null
+        role: 'head' | 'dependant' | 'member'
+        isCurrentPatient?: boolean
+      }>
+      billingNote?: string
+      message?: string
+    }>(`/api/patients/${id}/household`),
 
   create: (data: any) =>
     apiRequest<any>('/api/patients', { method: 'POST', body: data }),
@@ -1870,6 +1928,9 @@ export const workflowApi = {
   consultationToLab: (data: any) =>
     apiRequest<any>('/api/workflow/consultation-to-lab', { method: 'POST', body: data }),
 
+  labToConsultation: (data: { orderId: number | string }) =>
+    apiRequest<any>('/api/workflow/lab-to-consultation', { method: 'POST', body: data }),
+
   // After prescription, create cashier queue for drug payment
   prescriptionToCashier: (data: any) =>
     apiRequest<any>('/api/workflow/prescription-to-cashier', { method: 'POST', body: data }),
@@ -2633,6 +2694,17 @@ export const billingApi = {
 
   updateMpesaSettings: (data: Partial<MpesaAdminSettings>) =>
     apiRequest<MpesaAdminSettings>('/api/billing/mpesa/settings', { method: 'PUT', body: data }),
+
+  getEtimsSettings: () => apiRequest<EtimsAdminSettings>('/api/billing/etims/settings'),
+
+  updateEtimsSettings: (
+    data: Partial<
+      EtimsAdminSettings & {
+        communicationKey?: string | null;
+      }
+    >
+  ) =>
+    apiRequest<EtimsAdminSettings>('/api/billing/etims/settings', { method: 'PUT', body: data }),
 
   getMpesaRegister: (params?: {
     status?: string;

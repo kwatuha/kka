@@ -9,7 +9,10 @@ node_modules/
 /.next/
 /out/
 out.zip
-docs/
+# Private / local documentation (never publish — files stay on disk only)
+/docs/
+/api/docs/
+
 # Credential lists (primary copy lives under docs/, which is ignored)
 **/UAT_TEST_CREDENTIALS*
 **/*test-credentials*.xlsx
@@ -61,10 +64,6 @@ yarn-error.log*
 .pnpm-debug.log*
 .vscode
 /api/database/ldb/
-
-# DHA drill backups (may contain PHI — keep local / secure store only)
-docs/evidence/backups/*.sql.gz
-docs/evidence/backups/*.gpg
 
 # legacy mock auth data (removed — use API users table)
 lib/data/users.json

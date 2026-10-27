@@ -58,6 +58,7 @@ import Link from "next/link"
 import { AddToQueueDialog, type QueueServicePointChoice, queueTypeLabel } from "@/components/add-to-queue-dialog"
 import { PatientShrCareEntryBanner } from "@/components/patient-shr-care-entry-banner"
 import { PatientShaEligibilityCard } from "@/components/patient-sha-eligibility-card"
+import { PatientHouseholdPanel } from "@/components/patient-household-panel"
 import { StaticRouteRegex, useResolvedRouteParam, STATIC_EXPORT_PARAM_PLACEHOLDER } from "@/lib/utils/static-export-params"
 import { fetchPatientSummaryBundle } from "@/lib/patient-care-timeline"
 import {
@@ -90,17 +91,33 @@ export default function PatientProfilePage() {
   useEffect(() => {
     let cancelled = false
 
+    const isTransientLoadError = (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      return /Unable to reach the server|Request timed out|failed to fetch|network/i.test(msg)
+    }
+
     const loadPatient = async () => {
       if (!patientId || patientId === STATIC_EXPORT_PARAM_PLACEHOLDER) {
         setLoading(false)
         return
       }
 
+      const maxAttempts = 3
       try {
         setLoading(true)
         setError(null)
-        const data = await patientApi.getById(patientId)
-        if (cancelled) return
+        let data: Awaited<ReturnType<typeof patientApi.getById>> | null = null
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          if (cancelled) return
+          try {
+            data = await patientApi.getById(patientId)
+            break
+          } catch (err) {
+            if (!isTransientLoadError(err) || attempt === maxAttempts) throw err
+            await new Promise((r) => setTimeout(r, 400 * attempt))
+          }
+        }
+        if (!data || cancelled) return
         setPatient(data)
 
         if (data.insuranceCompanyId) {
@@ -406,6 +423,9 @@ export default function PatientProfilePage() {
       </div>
 
       <div className="space-y-4">
+        {patient?.nupi || patient?.idNumber ? (
+          <PatientHouseholdPanel patientId={patientId} showWhenEmpty={Boolean(patient?.nupi)} />
+        ) : null}
         {patient?.nupi ? (
           <PatientShrCareEntryBanner
             patientId={patientId}

@@ -43,6 +43,11 @@ const STEPS = [
     href: "/administration?tab=system#sha-sandbox-claims",
     detail: "Optional: Billing insurance claim → sandbox adapter (not national visit)",
   },
+  {
+    label: "7. KRA eTIMS",
+    href: "/administration?tab=system#etims-settings",
+    detail: "Tax invoice OSCU/VSCU variables (sandbox PIN, branch, device, comm key)",
+  },
 ] as const
 
 export function IntegrationProcessBanner() {

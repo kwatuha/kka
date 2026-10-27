@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic"
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useForm, useFieldArray, useWatch } from "react-hook-form"
+import { useForm, useFieldArray, useWatch, type FieldErrors } from "react-hook-form"
 import { z } from "zod"
 import {
   CalendarIcon,
@@ -92,7 +92,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi, appointmentsApi, queueApi, radiologyApi, mortuaryApi, clinicalCdsApi } from "@/lib/api"
+import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi, appointmentsApi, queueApi, radiologyApi, mortuaryApi, clinicalCdsApi, workflowApi } from "@/lib/api"
 import { notifyFhirPublish } from "@/lib/notify-fhir-publish"
 import { AddAdmissionForm } from "@/components/add-admission-form"
 import { PatientDocuments } from "@/components/patient-documents"
@@ -130,9 +130,12 @@ const medicationSchema = z.object({
 })
 
 const labTestSchema = z.object({
-  testTypeId: z.string({
-    required_error: "Please select a test type.",
-  }),
+  testTypeId: z.preprocess(
+    (v) => (v == null || String(v).trim() === "" ? undefined : String(v)),
+    z.string({ required_error: "Please select a test type." }).min(1, {
+      message: "Please select a test type.",
+    })
+  ),
   labId: z.string().optional(),
   priority: z.enum(["routine", "urgent", "stat"]).default("routine"),
   clinicalIndication: z.string().optional(),
@@ -175,12 +178,102 @@ const orderSchema = z.object({
   alreadySaved: z.boolean().optional(), // Track if already saved
 })
 
-const encounterFormSchema = z.object({
-  patientId: z.string({
-    required_error: "Please select a patient.",
+function stripEmptyEncounterLineItems(raw: unknown) {
+  if (!raw || typeof raw !== "object") return raw
+  const data = raw as Record<string, unknown>
+  const keepMed = (m: unknown) => {
+    const row = m as { medicationId?: string | number; alreadySaved?: boolean }
+    const mid = row?.medicationId != null ? String(row.medicationId).trim() : ""
+    if (row?.alreadySaved) return Boolean(mid)
+    return Boolean(mid)
+  }
+  const keepTest = (t: unknown) => {
+    const row = t as { testTypeId?: string | number; alreadySaved?: boolean }
+    const tid = row?.testTypeId != null ? String(row.testTypeId).trim() : ""
+    // Saved orders appear under Investigations (patientLabResults), not in labTests[].
+    if (row?.alreadySaved) return false
+    return Boolean(tid)
+  }
+  const keepProc = (p: unknown) => {
+    const row = p as { procedureId?: string; alreadySaved?: boolean }
+    if (row?.alreadySaved) return true
+    return Boolean(row?.procedureId && String(row.procedureId).trim())
+  }
+  const keepRad = (r: unknown) => {
+    const row = r as { examTypeId?: string; alreadySaved?: boolean }
+    if (row?.alreadySaved) return true
+    return Boolean(row?.examTypeId && String(row.examTypeId).trim())
+  }
+  const keepOrder = (o: unknown) => {
+    const row = o as { chargeId?: string; alreadySaved?: boolean }
+    if (row?.alreadySaved) return true
+    return Boolean(row?.chargeId && String(row.chargeId).trim())
+  }
+  const normalizeLabTestRow = (t: unknown) => {
+    if (!t || typeof t !== "object") return t
+    const row = { ...(t as Record<string, unknown>) }
+    if (row.testTypeId != null && String(row.testTypeId).trim() !== "") {
+      row.testTypeId = String(row.testTypeId)
+    } else {
+      delete row.testTypeId
+    }
+    if (!row.orderDate || !String(row.orderDate).trim()) {
+      row.orderDate = format(new Date(), "yyyy-MM-dd")
+    }
+    if (!row.priority) row.priority = "routine"
+    return row
+  }
+
+  return {
+    ...data,
+    medications: Array.isArray(data.medications) ? data.medications.filter(keepMed) : data.medications,
+    labTests: Array.isArray(data.labTests)
+      ? data.labTests.map(normalizeLabTestRow).filter(keepTest)
+      : data.labTests,
+    procedures: Array.isArray(data.procedures) ? data.procedures.filter(keepProc) : data.procedures,
+    radiologyOrders: Array.isArray(data.radiologyOrders)
+      ? data.radiologyOrders.filter(keepRad)
+      : data.radiologyOrders,
+    orders: Array.isArray(data.orders) ? data.orders.filter(keepOrder) : data.orders,
+  }
+}
+
+function collectFieldErrorMessages(errors: FieldErrors, prefix = ""): string[] {
+  const messages: string[] = []
+  for (const [key, value] of Object.entries(errors)) {
+    if (!value || typeof value !== "object") continue
+    const err = value as {
+      message?: string
+      root?: { message?: string }
+      type?: string
+    }
+    if (typeof err.message === "string" && err.message.trim()) {
+      messages.push(prefix ? `${prefix}: ${err.message}` : err.message)
+      continue
+    }
+    if (err.root?.message) {
+      messages.push(String(err.root.message))
+      continue
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => {
+        if (item && typeof item === "object") {
+          messages.push(...collectFieldErrorMessages(item as FieldErrors, `${key}[${index}]`))
+        }
+      })
+    } else {
+      messages.push(...collectFieldErrorMessages(value as FieldErrors, key))
+    }
+  }
+  return messages
+}
+
+const encounterFormCore = z.object({
+  patientId: z.string().min(1, {
+    message: "Please select a patient.",
   }),
-  doctorId: z.string({
-    required_error: "Please select a doctor.",
+  doctorId: z.string().min(1, {
+    message: "Please select a doctor.",
   }),
   encounterDate: z.date({
     required_error: "Encounter date is required.",
@@ -223,6 +316,8 @@ const encounterFormSchema = z.object({
     })
   }
 })
+
+const encounterFormSchema = z.preprocess(stripEmptyEncounterLineItems, encounterFormCore)
 
 type MedicationValues = z.infer<typeof medicationSchema>
 type LabTestValues = z.infer<typeof labTestSchema>
@@ -278,12 +373,22 @@ const defaultLabTest = createDefaultLabTest()
 const defaultProcedure = createDefaultProcedure()
 const defaultOrder = createDefaultOrder()
 
+export type EncounterSaveOutcome = {
+  sentToLab?: boolean
+  labOrdersCreated?: number
+  labReturnReview?: boolean
+}
+
 interface PatientEncounterFormProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSuccess?: () => void
+  onSuccess?: (outcome?: EncounterSaveOutcome) => void
   initialPatientId?: string
   initialDoctorId?: string
+  /** Active consultation queue ticket when opened from the queue desk */
+  initialConsultationQueueId?: string | number
+  /** Set when opening from a lab-results-ready consultation row */
+  labReturnReview?: boolean
 }
 
 //const STORAGE_KEY = 'patient_encounter_form_draft'
@@ -299,6 +404,39 @@ function findTodayMedicalRecord(records: any[], encounterDate?: Date) {
       .filter((r) => r?.visitDate && format(new Date(r.visitDate), 'yyyy-MM-dd') === day)
       .sort((a, b) => Number(b.recordId || 0) - Number(a.recordId || 0))[0] || null
   )
+}
+
+const CLINICAL_AMENDMENT_KEYS = [
+  'chiefComplaint',
+  'diagnosis',
+  'treatment',
+  'physicalExamination',
+  'outcome',
+  'historyOfPresentIllness',
+] as const
+
+const AMENDMENT_REASON_PROMPT =
+  'This visit was already completed. Enter a brief reason for changing diagnosis, treatment, or other clinical notes (recorded in the audit log), then save again.'
+
+function snapshotClinicalBaseline(record: Record<string, unknown> | null | undefined) {
+  const out: Record<string, string> = {}
+  for (const key of CLINICAL_AMENDMENT_KEYS) {
+    out[key] = String(record?.[key] ?? '')
+  }
+  return out
+}
+
+function encounterClinicalNarrativeChanged(
+  data: Record<string, unknown>,
+  baseline: Record<string, string>
+) {
+  return CLINICAL_AMENDMENT_KEYS.some(
+    (key) => String(data[key] ?? '') !== String(baseline[key] ?? '')
+  )
+}
+
+function isAmendmentReasonRequiredError(message: string) {
+  return /amendment.?reason|AMENDMENT_REASON_REQUIRED/i.test(message)
 }
 
 /** GET /laboratory/orders/:id/results returns order items with optional `result` on each row. */
@@ -318,10 +456,18 @@ export function PatientEncounterForm({
   onOpenChange,
   onSuccess,
   initialPatientId,
-  initialDoctorId
+  initialDoctorId,
+  initialConsultationQueueId,
+  labReturnReview = false,
 }: PatientEncounterFormProps) {
   const { user, currentBranch } = useAuth()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [saveHint, setSaveHint] = useState<string | null>(null)
+  const [saveHintTone, setSaveHintTone] = useState<'validation' | 'action'>('validation')
+  const [amendmentReason, setAmendmentReason] = useState('')
+  const [showAmendmentReasonField, setShowAmendmentReasonField] = useState(false)
+  const clinicalBaselineRef = useRef<Record<string, string>>({})
+  const visitWasCompletedAtLoadRef = useRef(false)
   const [doctors, setDoctors] = useState<any[]>([])
   const [testTypes, setTestTypes] = useState<any[]>([])
   const [medications, setMedications] = useState<any[]>([])
@@ -480,6 +626,12 @@ export function PatientEncounterForm({
   const hydratedTodayKeyRef = useRef<string | null>(null)
   const persistProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const todayEncounterRecordIdRef = useRef<number | null>(null)
+  const openRef = useRef(open)
+  const closeFormResetSeqRef = useRef(0)
+  const encounterOpenBootstrappedRef = useRef<string | null>(null)
+  const encounterCatalogSessionRef = useRef<string | null>(null)
+  openRef.current = open
+  const lockedInitialPatientId = (initialPatientId ?? "").toString().trim()
   const [selectedDiagnoses, setSelectedDiagnoses] = useState<any[]>([])
   const [addDiagnosesToProblemList, setAddDiagnosesToProblemList] = useState(true)
   const [clinicalCdsAlerts, setClinicalCdsAlerts] = useState<
@@ -552,6 +704,12 @@ export function PatientEncounterForm({
   })
 
   const patientId = form.watch("patientId")
+  const resolvedPatientId = (patientId || lockedInitialPatientId || "").toString().trim()
+  const showPatientChartLoading = Boolean(
+    open &&
+      resolvedPatientId &&
+      (!patientData || isLoadingPatientData || loadingPatientData)
+  )
 
   const normalizeTimeForInput = (time?: string | null): string => {
     if (!time) return ""
@@ -606,42 +764,98 @@ export function PatientEncounterForm({
       })[0]
   }, [])
 
-  // Reset loading state when dialog closes
+  // Reset loading state when dialog closes (defer form reset so the dialog does not flash empty while closing)
   useEffect(() => {
-    if (!open) {
-      console.log('🚪 [ENCOUNTER FORM] Dialog closing - clearing all loading states')
-      setLoading(false)
-      setIsLoadingData(false)
-      setIsLoadingPatientData(false)
-      setLoadingPatientData(false)
-      setLastLoadedPatientId(null)
-      setError(null)
+    if (open) {
+      closeFormResetSeqRef.current += 1
+      return
     }
-  }, [open])
 
-  // Load saved draft when form opens - only run once when form opens
-  useEffect(() => {
-    if (!open) return
-    if (isLoadingData) return // Don't run if already loading
-
-    console.log('📂 [ENCOUNTER FORM] Form opened - calling loadData')
-    // Ensure loading state is cleared before starting
+    console.log('🚪 [ENCOUNTER FORM] Dialog closing - clearing all loading states')
+    encounterOpenBootstrappedRef.current = null
+    encounterCatalogSessionRef.current = null
     setLoading(false)
     setIsLoadingData(false)
+    setIsLoadingPatientData(false)
+    setLoadingPatientData(false)
+    setLastLoadedPatientId(null)
+    setError(null)
+    setSaveHint(null)
+    setSaveHintTone('validation')
+    setAmendmentReason('')
+    setShowAmendmentReasonField(false)
+    clinicalBaselineRef.current = {}
+    visitWasCompletedAtLoadRef.current = false
+    setTodayEncounterRecordId(null)
+    todayEncounterRecordIdRef.current = null
 
-    // Add a safety timeout to ensure loading state clears even if loadData hangs
+    const resetSeq = closeFormResetSeqRef.current
+    const timer = window.setTimeout(() => {
+      if (closeFormResetSeqRef.current !== resetSeq || openRef.current) return
+      form.reset({
+        patientId: "",
+        doctorId: initialDoctorId || "",
+        encounterDate: new Date(new Date().setHours(0, 0, 0, 0)),
+        visitType: "Outpatient",
+        department: "",
+        chiefComplaint: "",
+        symptoms: "",
+        historyOfPresentIllness: "",
+        physicalExamination: "",
+        diagnosis: "",
+        treatment: "",
+        outcome: "",
+        notes: "",
+        tbScreenCough: "",
+        tbScreenFever: "",
+        tbScreenNightSweats: "",
+        tbScreenWeightLoss: "",
+        tbScreening: "",
+        medications: [],
+        labTests: [],
+        procedures: [],
+        orders: [],
+      })
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [open, form, initialDoctorId])
+
+  // Bootstrap queue-selected patient when the encounter opens (never skip — avoids empty patientId races)
+  useEffect(() => {
+    if (!open) return
+
+    const pid =
+      lockedInitialPatientId || form.getValues("patientId")?.toString().trim() || ""
+    if (!pid) return
+
+    if (form.getValues("patientId") !== pid) {
+      form.setValue("patientId", pid, { shouldValidate: false, shouldDirty: false })
+    }
+
+    if (encounterOpenBootstrappedRef.current === pid) return
+    encounterOpenBootstrappedRef.current = pid
+
+    console.log('📂 [ENCOUNTER FORM] Form opened for patient:', pid)
+
+    setLoading(false)
+    setIsLoadingData(false)
+    setError(null)
+    setSaveHint(null)
+
     const safetyTimeout = setTimeout(() => {
       console.warn('⚠️ [ENCOUNTER FORM] Safety timeout - forcing loading state clear')
       setLoading(false)
       setIsLoadingData(false)
-    }, 35000) // 35 seconds - slightly longer than loadData timeout
+    }, 35000)
 
-    loadData().finally(() => {
+    if (encounterCatalogSessionRef.current !== pid) {
+      encounterCatalogSessionRef.current = pid
+      loadData().finally(() => clearTimeout(safetyTimeout))
+    } else {
       clearTimeout(safetyTimeout)
-    })
+    }
 
-    const patientId = initialPatientId || form.getValues("patientId")
-    const savedDraft = loadDraftFromStorage(patientId)
+    const savedDraft = loadDraftFromStorage(pid)
 
     if (savedDraft) {
       if (savedDraft.encounterDate) {
@@ -650,34 +864,39 @@ export function PatientEncounterForm({
       if (savedDraft.nextAppointmentDate) {
         savedDraft.nextAppointmentDate = new Date(savedDraft.nextAppointmentDate)
       }
-      // Clean up empty medication entries
       if (savedDraft.medications) {
         savedDraft.medications = savedDraft.medications.filter((med: any) =>
           med?.medicationId && med.medicationId.trim() !== ""
         )
       }
-      // Clean up empty procedure entries
       if (savedDraft.procedures) {
         savedDraft.procedures = savedDraft.procedures.filter((proc: any) =>
           proc?.procedureId && proc.procedureId.trim() !== ""
         )
       }
-      // Clean up empty order entries
       if (savedDraft.orders) {
         savedDraft.orders = savedDraft.orders.filter((order: any) =>
           order?.chargeId && order.chargeId.trim() !== ""
         )
       }
-      form.reset(savedDraft)
+      if (Array.isArray(savedDraft.labTests)) {
+        savedDraft.labTests = savedDraft.labTests.filter((t: any) => {
+          const tid = t?.testTypeId != null ? String(t.testTypeId).trim() : ""
+          if (!tid || t?.alreadySaved) return false
+          return true
+        })
+      } else {
+        savedDraft.labTests = []
+      }
+      form.reset({ ...savedDraft, patientId: pid })
       setHasUnsavedChanges(true)
     } else {
-      // Get current doctor ID from form if already set, otherwise use initialDoctorId
       const currentDoctorId = form.getValues("doctorId") || initialDoctorId || ""
 
       form.reset({
-        patientId: initialPatientId || "",
-        doctorId: currentDoctorId, // Preserve existing doctor ID if set
-        encounterDate: new Date(new Date().setHours(0, 0, 0, 0)), // Today's date at midnight
+        patientId: pid,
+        doctorId: currentDoctorId,
+        encounterDate: new Date(new Date().setHours(0, 0, 0, 0)),
         visitType: "Outpatient",
         department: "",
         chiefComplaint: "",
@@ -700,9 +919,14 @@ export function PatientEncounterForm({
       })
       setHasUnsavedChanges(false)
     }
-    setError(null)
+
+    setLastLoadedPatientId(pid)
+    setLoadingPatientData(true)
+    setIsLoadingPatientData(true)
+    void loadPatientData(pid)
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]) // Only depend on 'open' to prevent multiple triggers
+  }, [open, initialPatientId, lockedInitialPatientId])
 
   const persistEncounterProgress = useCallback(async (data: any) => {
     const pid = data?.patientId
@@ -902,15 +1126,9 @@ export function PatientEncounterForm({
     }
   }, [addTestDialogOpen, editingLabTestIndex])
 
-  // Load patient data when patient is selected
+  // Load patient chart when patient changes (manual pick in combobox); queue open is handled in bootstrap effect
   useEffect(() => {
-    if (patientId && open) {
-      // Only load if patientId changed or we haven't loaded this patient yet
-      if (patientId !== lastLoadedPatientId && !isLoadingPatientData) {
-        loadPatientData(patientId)
-        setLastLoadedPatientId(patientId)
-      }
-    } else {
+    if (!open) {
       setPatientData(null)
       setPatientAllergies([])
       setPatientMedications([])
@@ -925,8 +1143,22 @@ export function PatientEncounterForm({
       todayEncounterRecordIdRef.current = null
       hydratedTodayKeyRef.current = null
       setLastLoadedPatientId(null)
+      return
     }
-  }, [patientId, open, lastLoadedPatientId, isLoadingPatientData])
+
+    if (!patientId) {
+      // Queued encounter: bootstrap will set patientId — avoid clearing state on first paint
+      if (lockedInitialPatientId) return
+      return
+    }
+
+    if (patientId !== lastLoadedPatientId && !isLoadingPatientData) {
+      setLastLoadedPatientId(patientId)
+      setLoadingPatientData(true)
+      setIsLoadingPatientData(true)
+      void loadPatientData(patientId)
+    }
+  }, [patientId, open, lastLoadedPatientId, isLoadingPatientData, lockedInitialPatientId])
 
   const applyTodayRecordToForm = useCallback(
     (record: any) => {
@@ -953,6 +1185,9 @@ export function PatientEncounterForm({
       if (record.doctorId) form.setValue("doctorId", String(record.doctorId))
       if (record.visitType) form.setValue("visitType", record.visitType)
       if (record.department) form.setValue("department", record.department)
+      clinicalBaselineRef.current = snapshotClinicalBaseline(record)
+      visitWasCompletedAtLoadRef.current = Boolean(String(record.outcome || '').trim())
+      setShowAmendmentReasonField(visitWasCompletedAtLoadRef.current)
     },
     [form]
   )
@@ -1043,21 +1278,28 @@ export function PatientEncounterForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doctors.length, open, patientId]) // Only depend on doctors.length, not the full array
 
+  useEffect(() => {
+    if (!open || !labReturnReview) return
+    setActiveTab("investigations")
+    setInvestigationsSheetOpen(true)
+  }, [open, labReturnReview])
+
   // Reset form when switching patients (but don't reset doctor if it was auto-filled)
   // Only reset if patientId actually changed
   useEffect(() => {
     if (!open) return
     if (!patientId) return
 
-    // Check if this is a new patient (different from last loaded)
-    if (patientId === lastLoadedPatientId) return // Don't reset if same patient
+    if (patientId === lastLoadedPatientId) return
+
+    // First patient bind for this open session — open bootstrap already initialized the form
+    if (lastLoadedPatientId === null) return
 
     const currentDoctorId = form.getValues("doctorId") || initialDoctorId || ""
 
-    // Reset form when switching patients
     form.reset({
       patientId,
-      doctorId: currentDoctorId, // Preserve existing doctor ID
+      doctorId: currentDoctorId,
       encounterDate: new Date(new Date().setHours(0, 0, 0, 0)),
       visitType: "Outpatient",
       medications: [],
@@ -1068,7 +1310,7 @@ export function PatientEncounterForm({
 
     setHasUnsavedChanges(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId, open, lastLoadedPatientId]) // Removed form and initialDoctorId to prevent unnecessary resets
+  }, [patientId, open, lastLoadedPatientId])
 
 
   // Populate form with today's encounter data when patient data is loaded
@@ -1166,34 +1408,8 @@ export function PatientEncounterForm({
       }
     }
 
-    // Prepopulate Lab Tests
-    if (patientLabResults.length > 0) {
-      const encounterLabOrders = patientLabResults.filter((order: any) => {
-        const orderDateStr = format(new Date(order.orderDate), 'yyyy-MM-dd')
-        return orderDateStr === encounterDateStr && order.items && order.items.length > 0
-      })
-
-      if (encounterLabOrders.length > 0) {
-        const labTestsToAdd: any[] = []
-        encounterLabOrders.forEach((order: any) => {
-          order.items.forEach((item: any) => {
-            labTestsToAdd.push({
-              testTypeId: item.testTypeId?.toString() || item.testType?.testTypeId?.toString() || "",
-              priority: order.priority || "routine",
-              clinicalIndication: item.notes || item.clinicalIndication || "",
-              alreadySaved: true, // Mark as already saved since it's from existing order
-            })
-          })
-        })
-
-        if (labTestsToAdd.length > 0) {
-          console.log('✅ Prepopulating', labTestsToAdd.length, 'lab tests')
-          setTimeout(() => {
-            labTestsToAdd.forEach(test => appendLabTest(test))
-          }, 100)
-        }
-      }
-    }
+    // Lab orders for today are shown under Investigations (patientLabResults) — not copied into
+    // labTests[] which is only for new orders to create on save (avoids Zod errors on save).
 
     // Prepopulate Medications
     if (patientMedications.length > 0) {
@@ -1638,6 +1854,9 @@ export function PatientEncounterForm({
         setTodayVitals(null)
       }
 
+      const scrubbed = stripEmptyEncounterLineItems(form.getValues()) as EncounterFormValues
+      form.setValue("labTests", (scrubbed.labTests ?? []) as any, { shouldValidate: false })
+
       console.log('✅ [ENCOUNTER FORM] loadPatientData completed for patient:', id)
     } catch (err: any) {
       console.error('❌ [ENCOUNTER FORM] Error loading patient data:', err)
@@ -1692,6 +1911,13 @@ export function PatientEncounterForm({
   async function onSubmit(data: EncounterFormValues) {
     try {
       setError(null)
+      setSaveHint(null)
+      setSaveHintTone('validation')
+
+      if (lockedInitialPatientId && (!data.patientId || !String(data.patientId).trim())) {
+        data.patientId = lockedInitialPatientId
+        form.setValue("patientId", lockedInitialPatientId, { shouldValidate: false })
+      }
 
       // Debug: Log form data before processing
       console.log('📋 Form submission data:', {
@@ -1742,6 +1968,13 @@ export function PatientEncounterForm({
 
         if (hasValidationError) {
           setActiveTab("prescription")
+          setPrescriptionSheetOpen(true)
+          setSaveHint("Enter quantity for in-stock medications before saving.")
+          toast({
+            title: "Medication quantity required",
+            description: "Enter quantity for medications that are in inventory.",
+            variant: "destructive",
+          })
           setIsSubmitting(false)
           return
         }
@@ -1779,10 +2012,32 @@ export function PatientEncounterForm({
       })
 
       const existingId = todayEncounterRecordIdRef.current || todayEncounterRecordId
+      const amendmentTrimmed = amendmentReason.trim()
+      if (
+        existingId &&
+        visitWasCompletedAtLoadRef.current &&
+        encounterClinicalNarrativeChanged(medicalRecordData, clinicalBaselineRef.current) &&
+        !amendmentTrimmed
+      ) {
+        setShowAmendmentReasonField(true)
+        setActiveTab('diagnosis')
+        setDiagnosisSheetOpen(true)
+        setSaveHint(AMENDMENT_REASON_PROMPT)
+        setSaveHintTone('action')
+        setError(null)
+        toast({
+          title: 'Amendment reason needed',
+          description: AMENDMENT_REASON_PROMPT,
+        })
+        setIsSubmitting(false)
+        return
+      }
+
       const medicalRecord = existingId
         ? await medicalRecordsApi.update(String(existingId), {
             ...medicalRecordData,
             encounterInProgress: false,
+            ...(amendmentTrimmed ? { amendmentReason: amendmentTrimmed } : {}),
           })
         : await medicalRecordsApi.create(medicalRecordData)
       console.log(existingId ? '✅ Medical record updated:' : '✅ Medical record created:', {
@@ -1909,6 +2164,7 @@ export function PatientEncounterForm({
 
       // 3. Create lab test orders if any (only unsaved ones)
       const unsavedLabTests = data.labTests?.filter((test: any) => !test.alreadySaved) || []
+      let labOrdersCreated = 0
       console.log('🧪 Saving lab tests:', { total: data.labTests?.length || 0, unsaved: unsavedLabTests.length })
       if (unsavedLabTests.length > 0) {
         // Group tests by priority + destination lab — one order per group
@@ -1947,11 +2203,45 @@ export function PatientEncounterForm({
           const createdOrder = await laboratoryApi.createOrder(labOrderData)
           console.log('✅ Lab order created:', createdOrder)
           createdOrders.push({ order: createdOrder, tests: testList })
+          labOrdersCreated += 1
         }
         // Lab: invoice + cashier queue are created on order (api/routes/laboratoryRoutes.js).
         // Patient is queued to Laboratory only after invoice is paid at cashier (see billingRoutes payment handler).
       } else {
         console.log('⏭️ Skipping lab test creation - no unsaved lab tests')
+      }
+
+      let sentToLab = false
+      if (
+        labOrdersCreated > 0 &&
+        !labReturnReview &&
+        initialConsultationQueueId != null &&
+        String(initialConsultationQueueId).trim() !== ""
+      ) {
+        try {
+          await workflowApi.consultationToLab({
+            patientId: parseInt(String(data.patientId), 10),
+            queueId: Number(initialConsultationQueueId),
+            priority: unsavedLabTests.some((t: any) => t.priority === "stat" || t.priority === "urgent")
+              ? "urgent"
+              : "normal",
+          })
+          sentToLab = true
+          toast({
+            title: "Sent to laboratory",
+            description:
+              "Consultation ticket closed. Patient will join the lab queue after cashier payment (if applicable).",
+          })
+        } catch (labQueueErr: any) {
+          console.warn("consultationToLab failed:", labQueueErr)
+          toast({
+            title: "Encounter saved — lab queue not updated",
+            description:
+              labQueueErr?.message ||
+              "Could not move the patient to the laboratory queue automatically. Add them from Queue or Laboratory.",
+            variant: "destructive",
+          })
+        }
       }
 
       // 4. Create patient procedures if any (only unsaved ones)
@@ -2208,15 +2498,24 @@ export function PatientEncounterForm({
       // We only display existing notifications here - no API calls needed
 
       // Show success message
-      toast({
-        title: "Encounter Saved",
-        description: data.outcome === "Admitted" && !admittedThisVisit
-          ? "Encounter saved. Choose a ward and bed to move the patient to inpatient."
-          : "Patient encounter has been saved successfully.",
-      })
+      if (!sentToLab) {
+        toast({
+          title: labReturnReview ? "Results review saved" : "Encounter Saved",
+          description:
+            data.outcome === "Admitted" && !admittedThisVisit
+              ? "Encounter saved. Choose a ward and bed to move the patient to inpatient."
+              : labReturnReview
+                ? "Lab results review documented. Patient can leave consultation when you complete the queue ticket."
+                : "Patient encounter has been saved successfully.",
+        })
+      }
 
       if (onSuccess) {
-        onSuccess()
+        onSuccess({
+          sentToLab,
+          labOrdersCreated,
+          labReturnReview,
+        })
       }
 
       // Clear loading states before closing
@@ -2231,28 +2530,43 @@ export function PatientEncounterForm({
       }
 
       onOpenChange(false)
-      form.reset()
     } catch (err: any) {
-      setError(err.message || 'Failed to save encounter')
-      console.error('❌ Error saving encounter:', err)
-      console.error('Error details:', {
-        message: err.message,
-        stack: err.stack,
-        response: err.response,
-      })
+      const errMessage = String(err?.message || 'Failed to save encounter')
+      const amendmentRequired = isAmendmentReasonRequiredError(errMessage)
 
-      const msg = String(err?.message || '').toLowerCase()
-      const looksOffline =
-        /failed to fetch|network|unable to reach|timed out|timeout/i.test(msg) ||
-        err?.status == null
+      if (amendmentRequired) {
+        setShowAmendmentReasonField(true)
+        setActiveTab('diagnosis')
+        setDiagnosisSheetOpen(true)
+        setSaveHint(AMENDMENT_REASON_PROMPT)
+        setSaveHintTone('action')
+        setError(null)
+        toast({
+          title: 'Amendment reason needed',
+          description: AMENDMENT_REASON_PROMPT,
+        })
+      } else {
+        setError(errMessage)
+        console.error('❌ Error saving encounter:', err)
+        console.error('Error details:', {
+          message: err.message,
+          stack: err.stack,
+          response: err.response,
+        })
 
-      toast({
-        title: looksOffline ? "Offline — draft kept" : "Error",
-        description: looksOffline
-          ? "Could not reach the server. Your encounter draft stays on this device — reopen the form when online to submit."
-          : err.message || "Failed to save encounter",
-        variant: "destructive",
-      })
+        const msg = errMessage.toLowerCase()
+        const looksOffline =
+          /failed to fetch|network|unable to reach|timed out|timeout/i.test(msg) ||
+          err?.status == null
+
+        toast({
+          title: looksOffline ? "Offline — draft kept" : "Error",
+          description: looksOffline
+            ? "Could not reach the server. Your encounter draft stays on this device — reopen the form when online to submit."
+            : errMessage,
+          variant: "destructive",
+        })
+      }
 
       // Clear all loading states on error
       setIsSubmitting(false)
@@ -2269,28 +2583,84 @@ export function PatientEncounterForm({
   }
 
 
-  const submitEncounter = form.handleSubmit(onSubmit, (errors) => {
-    if (
+  const onSubmitValidationFailed = (errors: FieldErrors<EncounterFormValues>) => {
+    const messages = collectFieldErrorMessages(errors)
+    const tbIssue =
       errors.tbScreening ||
       errors.tbScreenCough ||
       errors.tbScreenFever ||
       errors.tbScreenNightSweats ||
-      errors.tbScreenWeightLoss
-    ) {
-      setActiveTab("encounter")
+      errors.tbScreenWeightLoss ||
+      messages.some((m) => /tb|tuberculosis|cough|night sweats|weight loss|fever/i.test(m))
+
+    if (tbIssue) {
+      setActiveTab("overview")
+      const hint =
+        "Complete TB screening on the Overview tab (cough, fever, night sweats, weight loss, and screening result)."
+      setSaveHint(hint)
       toast({
         title: "TB screening is required",
-        description: "Answer cough, fever, night sweats, and weight loss before saving this consultation.",
+        description: hint,
         variant: "destructive",
       })
       return
     }
+
+    if (errors.doctorId || messages.some((m) => /doctor/i.test(m))) {
+      const hint = "Select the consulting doctor in the header before saving."
+      setSaveHint(hint)
+      toast({
+        title: "Doctor required",
+        description: hint,
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (errors.patientId || messages.some((m) => /patient/i.test(m))) {
+      const hint = "Patient is missing. Re-open the encounter from the queue or select a patient."
+      setSaveHint(hint)
+      toast({
+        title: "Patient required",
+        description: hint,
+        variant: "destructive",
+      })
+      return
+    }
+
+    const labIssue =
+      errors.labTests ||
+      messages.some((m) => /lab test|test type|order date/i.test(m))
+
+    if (labIssue) {
+      const hint =
+        "Fix lab test rows in Investigations — each new test needs a test type and order date, or remove empty rows."
+      setInvestigationsSheetOpen(true)
+      setLabTestsSheetOpen(true)
+      setSaveHint(hint)
+      toast({
+        title: "Lab test entry incomplete",
+        description: hint,
+        variant: "destructive",
+      })
+      return
+    }
+
+    const summary =
+      messages.slice(0, 3).join(" ") || "Some required fields are missing. Check Overview and section panels."
+    setSaveHint(summary)
     toast({
-      title: "Check required fields",
-      description: "Some required fields are missing.",
+      title: "Cannot save encounter",
+      description: summary,
       variant: "destructive",
     })
-  })
+  }
+
+  const submitEncounter = () => {
+    const sanitized = stripEmptyEncounterLineItems(form.getValues()) as EncounterFormValues
+    form.setValue("labTests", (sanitized.labTests ?? []) as any, { shouldValidate: false })
+    void form.handleSubmit(onSubmit, onSubmitValidationFailed)()
+  }
 
   const setTbSymptom = (
     field: "tbScreenCough" | "tbScreenFever" | "tbScreenNightSweats" | "tbScreenWeightLoss",
@@ -2385,9 +2755,10 @@ export function PatientEncounterForm({
   if (!key) return
 
   try {
+    const stripped = stripEmptyEncounterLineItems(data) as Record<string, unknown>
     const payload = {
       data: {
-        ...data,
+        ...stripped,
         encounterDate:
           data.encounterDate instanceof Date
             ? data.encounterDate.toISOString()
@@ -3423,6 +3794,17 @@ const clearDraftFromStorage = (patientId:any) => {
                           </div>
                         </div>
                       </>
+                    ) : resolvedPatientId ? (
+                      <div className="flex flex-1 items-center gap-2 text-sm text-muted-foreground min-w-0">
+                        <Loader2
+                          className={`h-4 w-4 shrink-0 ${showPatientChartLoading ? "animate-spin text-primary" : "text-muted-foreground"}`}
+                        />
+                        <span className="truncate">
+                          {showPatientChartLoading
+                            ? "Loading patient chart…"
+                            : "Patient chart ready"}
+                        </span>
+                      </div>
                     ) : (
                       <div className="flex-1">
                         <FormField
@@ -3606,15 +3988,37 @@ const clearDraftFromStorage = (patientId:any) => {
             })()}
 
               <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                {saveHint && saveHintTone === 'action' ? (
+                  <Alert className="mx-6 mt-4 flex-shrink-0 border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                    <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                    <AlertDescription className="text-sm">
+                      <span className="font-medium">Action needed before save — </span>
+                      {saveHint}
+                      {!diagnosisSheetOpen ? (
+                        <Button
+                          type="button"
+                          variant="link"
+                          className="h-auto p-0 ml-1 text-amber-900 dark:text-amber-200 underline"
+                          onClick={() => {
+                            setActiveTab('diagnosis')
+                            setDiagnosisSheetOpen(true)
+                          }}
+                        >
+                          Open Diagnosis panel
+                        </Button>
+                      ) : null}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 {error && (
                   <div className="mx-6 mt-4 p-3 text-sm text-red-500 bg-red-50 rounded-md flex-shrink-0">
                     {error}
                   </div>
                 )}
-                {(loading || isLoadingData) && (
+                {(loading || isLoadingData) && !showPatientChartLoading && (
                   <div className="flex items-center justify-center py-4 flex-shrink-0">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    <span className="ml-2 text-sm text-muted-foreground">Loading data...</span>
+                    <span className="ml-2 text-sm text-muted-foreground">Loading form catalogs…</span>
                   </div>
                 )}
                 {/* Tabs Container - Moved to Top */}
@@ -3683,6 +4087,23 @@ const clearDraftFromStorage = (patientId:any) => {
                     </TabsList>
                   </div>
 
+                  {showPatientChartLoading ? (
+                    <div
+                      className="flex-1 flex flex-col items-center justify-center gap-4 min-h-[min(420px,50vh)] px-6 text-center"
+                      aria-live="polite"
+                      aria-busy="true"
+                    >
+                      <Loader2 className="h-12 w-12 animate-spin text-primary" />
+                      <div className="space-y-1 max-w-md">
+                        <p className="text-base font-medium text-foreground">Loading patient encounter</p>
+                        <p className="text-sm text-muted-foreground">
+                          Fetching demographics, allergies, vitals, history, and orders for this visit. This usually
+                          takes a few seconds.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                  <>
                   {/* Scrollable Tab Content */}
                   {/* Overview Tab - Patient Information and Summary */}
                   <TabsContent value="overview" className="flex-1 overflow-hidden min-h-0">
@@ -3937,7 +4358,9 @@ const clearDraftFromStorage = (patientId:any) => {
                         ) : (
                           <Card>
                             <CardContent className="py-8 text-center text-muted-foreground">
-                              Please select a patient to view overview
+                              {resolvedPatientId
+                                ? "Patient chart could not be loaded. Close and reopen the encounter, or check your connection."
+                                : "Please select a patient to view overview"}
                             </CardContent>
                           </Card>
                         )}
@@ -4284,22 +4707,34 @@ const clearDraftFromStorage = (patientId:any) => {
                       </div>
                     </div>
                   </TabsContent>
+                  </>
+                  )}
                 </Tabs>
               </div>
 
               {/* Fixed Footer - Always visible above sheets */}
               <DialogFooter className="px-6 py-4 border-t bg-background flex-shrink-0 z-[100] relative shadow-lg flex-wrap gap-2 sm:justify-between">
-                  <p className="text-xs text-muted-foreground w-full sm:w-auto sm:max-w-[50%] order-last sm:order-first">
-                    Save the full visit here. Section panels use Save section and keep working on the main screen.
-                  </p>
+                  <div className="w-full sm:w-auto sm:max-w-[55%] space-y-1 order-last sm:order-first">
+                    <p className="text-xs text-muted-foreground">
+                      Save the full visit here. Section panels use Save section and keep working on the main screen.
+                    </p>
+                    {saveHint && saveHintTone !== 'action' ? (
+                      <p className="text-sm text-destructive flex items-start gap-1.5 font-medium">
+                        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                        <span>{saveHint}</span>
+                      </p>
+                    ) : null}
+                    {error ? (
+                      <p className="text-sm text-destructive">{error}</p>
+                    ) : null}
+                  </div>
                   <div className="flex gap-2 ml-auto">
                   <Button type="button" variant="outline" onClick={() => handleDialogClose(false)}>
                     Cancel
                   </Button>
                   <Button
-                    type="button"
-                    onClick={() => submitEncounter()}
-                    disabled={isSubmitting}
+                    type="submit"
+                    disabled={isSubmitting || showPatientChartLoading}
                     className="min-w-[140px]"
                   >
                     {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -4722,6 +5157,28 @@ const clearDraftFromStorage = (patientId:any) => {
                       );
                     }}
                   />
+
+                  {showAmendmentReasonField && (
+                    <>
+                      <Separator />
+                      <div className="rounded-lg border border-amber-300 bg-amber-50/80 p-4 space-y-2 dark:border-amber-800 dark:bg-amber-950/30">
+                        <p className="text-sm font-medium text-amber-950 dark:text-amber-100">
+                          Amendment reason (required when changing clinical notes on a completed visit)
+                        </p>
+                        <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
+                          This is not a system error — it is a short audit note explaining why diagnosis or treatment is
+                          being updated after the visit was already saved.
+                        </p>
+                        <Textarea
+                          placeholder="e.g. Corrected ICD code after review, updated treatment after lab results"
+                          className="min-h-[80px] bg-background"
+                          value={amendmentReason}
+                          onChange={(e) => setAmendmentReason(e.target.value)}
+                          disabled={isSubmitting}
+                        />
+                      </div>
+                    </>
+                  )}
 
                   <Separator />
 
@@ -6145,16 +6602,16 @@ const clearDraftFromStorage = (patientId:any) => {
                         console.log('🧪 Saving lab test order immediately:', orderData)
                         const result = await laboratoryApi.createOrder(orderData)
                         console.log('✅ Lab test order saved successfully:', result)
-                        
-                        // Mark as already saved and add to form
-                        const newTest = { 
-                          ...tempLabTest, 
-                          alreadySaved: true,
-                          orderId: result.orderId || result.orderId
-                        }
-                        console.log('➕ Adding saved lab test to form:', newTest)
-                        appendLabTest(newTest)
-                        
+
+                        // Order is persisted — show under Existing Lab Orders only (not labTests[]).
+                        const currentPending = (form.getValues("labTests") || []).filter(
+                          (t: any) =>
+                            !t?.alreadySaved &&
+                            t?.testTypeId != null &&
+                            String(t.testTypeId).trim() !== ""
+                        )
+                        form.setValue("labTests", currentPending, { shouldValidate: true })
+
                         // Reload patient lab orders to update the "Existing Lab Orders" section
                         try {
                           const updatedOrders = await laboratoryApi.getOrders(patientId)

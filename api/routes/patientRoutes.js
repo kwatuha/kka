@@ -133,6 +133,33 @@ router.get('/vitals/today', async (req, res) => {
 });
 
 /**
+ * GET /api/patients/:id/household — household head + linked dependants in this facility
+ */
+router.get('/:id/household', async (req, res) => {
+    const patientId = Number(req.params.id);
+    if (!patientId) return res.status(400).json({ message: 'Invalid patient id' });
+    try {
+        const scope = await resolveFacilityScope(pool, req);
+        const { listHouseholdMembersForPatient } = require('../lib/patientHousehold');
+        const result = await listHouseholdMembersForPatient(pool, scope, patientId);
+        if (!result.found) return res.status(404).json({ message: 'Patient not found' });
+        if (result.forbidden) {
+            return res.status(403).json({ message: 'Patient not in your facility scope' });
+        }
+        res.json(result);
+    } catch (error) {
+        if (String(error.message || '').includes('linkedParentCrId')) {
+            return res.status(503).json({
+                message: 'Apply migration 149_patients_linked_parent_cr.sql',
+                error: error.message,
+            });
+        }
+        console.error('patient household:', error);
+        res.status(500).json({ message: 'Error loading household', error: error.message });
+    }
+});
+
+/**
  * GET /api/patients/:id/data-export — portability bundle (DHA PRI-DATAPORT)
  */
 router.get('/:id/data-export', async (req, res) => {
@@ -710,11 +737,16 @@ router.post('/', async (req, res) => {
               status = cr.skipped ? 'skipped' : 'registered';
             }
             if (cr.nupi) {
+              const linkedParent =
+                cr.patient?.linkedParentCrId ||
+                cr.dependant?.linkedParentCrId ||
+                null;
               await connection.execute(
                 `UPDATE patients
-                 SET nupi = ?, nupiStatus = ?, crReference = ?, nupiResolvedAt = NOW()
+                 SET nupi = ?, nupiStatus = ?, crReference = ?, nupiResolvedAt = NOW(),
+                     linkedParentCrId = COALESCE(?, linkedParentCrId)
                  WHERE patientId = ?`,
-                [cr.nupi, status, cr.crReference || null, patientId]
+                [cr.nupi, status, cr.crReference || null, linkedParent, patientId]
               );
               nupiPayload = {
                 nupi: cr.nupi,

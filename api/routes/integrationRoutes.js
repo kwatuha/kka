@@ -275,6 +275,9 @@ router.post('/shr/visits/start', async (req, res) => {
       practitionerPuid,
       emergency: Boolean(body.emergency),
       incapacityReason: body.incapacityReason,
+      representativeCrId: body.representativeCrId || body.representative_cr_id,
+      representativeRelationship:
+        body.representativeRelationship || body.representative_relationship,
     });
     res.status(201).json(result);
   } catch (err) {
@@ -505,11 +508,19 @@ router.post('/sha/eligibility/check', async (req, res) => {
     if (memberCr.resolvedNupiFromCrLookup && !patient.nupi && memberCr.memberCrNumber) {
       await pool.execute(
         `UPDATE patients
-         SET nupi = ?, nupiStatus = 'resolved', nupiResolvedAt = NOW()
+         SET nupi = ?, nupiStatus = 'resolved', nupiResolvedAt = NOW(),
+             linkedParentCrId = COALESCE(?, linkedParentCrId)
          WHERE patientId = ? AND voided = 0`,
-        [memberCr.memberCrNumber, patientId]
+        [memberCr.memberCrNumber, memberCr.linkedParentCrId || null, patientId]
       );
       nupiPersisted = true;
+    } else if (memberCr.linkedParentCrId) {
+      await pool
+        .execute(
+          `UPDATE patients SET linkedParentCrId = ? WHERE patientId = ? AND voided = 0 AND linkedParentCrId IS NULL`,
+          [memberCr.linkedParentCrId, patientId]
+        )
+        .catch(() => {});
     }
 
     const result = await checkShaEligibility({
@@ -737,9 +748,40 @@ router.post('/sha/claims/contacts', async (req, res) => {
     if (!patient) return res.status(404).json({ message: 'Patient not found' });
     const patientCrId = await resolveMemberCrForPatient(patient, req.body?.memberCrNumber);
     const result = await listPatientContacts({ patientCrId });
+    const contacts = result.contacts || [];
+    let dependantContactsHint = null;
+    if (!result.error && contacts.length === 0) {
+      const { resolveShaMemberCrForPatient } = require('../lib/shaPatientMemberCr');
+      const memberCr = await resolveShaMemberCrForPatient(pool, patient);
+      const isDependantLike =
+        memberCr.isDependantMember ||
+        /birth certificate/i.test(String(patient.idType || '')) ||
+        Boolean(memberCr.linkedParentCrId);
+      if (isDependantLike) {
+        const parentCr =
+          memberCr.linkedParentCrId ||
+          (patient.linkedParentCrId ? String(patient.linkedParentCrId) : null);
+        let parentContacts = [];
+        if (parentCr) {
+          const parentList = await listPatientContacts({ patientCrId: parentCr });
+          parentContacts = parentList.contacts || [];
+        }
+        dependantContactsHint = {
+          memberCrNumber: patientCrId,
+          linkedParentCrId: parentCr,
+          parentContactCount: parentContacts.length,
+          parentContactSample: parentContacts[0]?.contactValue || null,
+          note:
+            'National GET /patients/contacts returned no rows for this dependant NUPI. DHA’s Get Beneficiary Valid Contact workflow should return parent/guardian phones here (same patient_id). Do not pass the parent’s contact_id from a separate parent contacts call — use contacts returned on the dependant query, omit contact_id to use the default contact, or ask DHA UAT to link guardian contacts on the dependant CR / OTP-whitelist the NUPI.',
+          docUrl: 'https://hie-docs.dha.go.ke/docs/consent/process/getBeneficiaryValidContact',
+        };
+      }
+    }
     res.status(result.error && result.mode === 'live' ? 502 : 200).json({
       patientId,
       ...result,
+      contacts,
+      dependantContactsHint,
     });
   } catch (err) {
     console.error('sha claims/contacts:', err);
@@ -834,9 +876,11 @@ router.post('/sha/claims/authorize/reject', async (req, res) => {
 router.post('/sha/claims/otp/send', async (req, res) => {
   try {
     const patientId = Number(req.body?.patientId);
-    const contactId = req.body?.contactId;
-    if (!patientId || !contactId) {
-      return res.status(400).json({ message: 'patientId and contactId are required' });
+    const contactIdRaw = req.body?.contactId;
+    const contactId =
+      contactIdRaw != null && String(contactIdRaw).trim() !== '' ? contactIdRaw : null;
+    if (!patientId) {
+      return res.status(400).json({ message: 'patientId is required' });
     }
     const patient = await loadPatientForSha(patientId);
     if (!patient) return res.status(404).json({ message: 'Patient not found' });
@@ -874,7 +918,7 @@ router.post('/sha/claims/otp/send', async (req, res) => {
     );
     const openVisit = openVisitRows[0] || null;
     const updated = await shaEclaimsSessions.markOtpSent(session.sessionId, {
-      contactId,
+      contactId: contactId != null ? String(contactId) : 'default',
       otpRecord: otpResult.otpRecord,
       rawOtpResponse: otpResult.raw || otpResult,
     });

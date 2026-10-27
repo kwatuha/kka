@@ -203,7 +203,9 @@ export function AddMedicalRecordForm({ open, onOpenChange, onSuccess, record }: 
         )
         const reason = String(data.amendmentReason || "").trim()
         if (clinicalChanged && !reason) {
-          setError("Amendment reason is required when changing diagnosis, treatment, or other clinical text.")
+          setError(
+            "This visit was already saved. Enter a brief amendment reason below (for the audit log), then save again."
+          )
           setIsSubmitting(false)
           return
         }
@@ -241,9 +243,16 @@ export function AddMedicalRecordForm({ open, onOpenChange, onSuccess, record }: 
           <DialogDescription>Enter patient medical record information.</DialogDescription>
         </DialogHeader>
         {error && (
-          <div className="bg-destructive/15 text-destructive text-sm p-3 rounded-md">
-            {error}
-          </div>
+          <Alert
+            className={
+              /amendment reason/i.test(error)
+                ? "border-amber-300 bg-amber-50 text-amber-950"
+                : "border-destructive/50 bg-destructive/15 text-destructive"
+            }
+          >
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription className="text-sm">{error}</AlertDescription>
+          </Alert>
         )}
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
@@ -460,14 +469,17 @@ export function AddMedicalRecordForm({ open, onOpenChange, onSuccess, record }: 
                   name="amendmentReason"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Amendment reason (if changing clinical text)</FormLabel>
+                      <FormLabel>Amendment reason (required when changing clinical text)</FormLabel>
                       <FormControl>
                         <Textarea
-                          placeholder="Required when diagnosis, treatment, complaint, prescription, or notes change"
+                          placeholder="e.g. Corrected diagnosis after lab review — required for audit when clinical notes change"
                           {...field}
                         />
                       </FormControl>
-                      <FormDescription>Recorded in the system audit log with before/after snapshot.</FormDescription>
+                      <FormDescription>
+                        Short audit note — not an error. Required when diagnosis, treatment, or other clinical text changes
+                        on an existing record.
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}

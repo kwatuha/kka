@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
-import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill, Scan, ClipboardList, Video } from "lucide-react"
+import { MoreHorizontal, FileText, PlayCircle, Stethoscope, Pill, Scan, ClipboardList, Video, FlaskConical } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   getQueueByServicePoint,
@@ -62,6 +62,15 @@ import {
   type QueueEntryLite,
 } from "@/components/queue-radiology-report-dialog"
 import { ProcedureQueueCompleteDialog } from "@/components/queue-procedure-complete-dialog"
+import {
+  type ConsultationQueueOriginFilter,
+  isLabReturnConsultationEntry,
+  labReturnOrderLabel,
+  labReturnProgressLabel,
+  matchesConsultationOriginFilter,
+} from "@/lib/queue-lab-return"
+import type { EncounterSaveOutcome } from "@/components/patient-encounter-form"
+import { cn } from "@/lib/utils"
 
 const PatientEncounterForm = dynamic(
   () => import("@/components/patient-encounter-form").then((m) => m.PatientEncounterForm),
@@ -380,8 +389,15 @@ function QueueContent({
   const [queueData, setQueueData] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [encounterFormOpen, setEncounterFormOpen] = useState(false)
-  const [selectedPatient, setSelectedPatient] = useState<{ patientId: string; patientName: string } | null>(null)
+  const [selectedPatient, setSelectedPatient] = useState<{
+    patientId: string
+    patientName: string
+    queueId?: string | number
+    labReturnReview?: boolean
+  } | null>(null)
   const [encountersToday, setEncountersToday] = useState<Record<string, boolean>>({})
+  const [consultationOriginFilter, setConsultationOriginFilter] =
+    useState<ConsultationQueueOriginFilter>("all")
   const [currentDoctorId, setCurrentDoctorId] = useState<string | undefined>()
   const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false)
   const [selectedPatientForDispense, setSelectedPatientForDispense] = useState<{ patientId: number; patientName: string } | null>(null)
@@ -418,6 +434,16 @@ function QueueContent({
     !selectedProviderNeedsMeetingLink &&
     (!selectedProviderNeedsZoomDefaults || (!zoomDefaultsLoading && hasZoomDefaults))
   const isConsultation = servicePoint === "consultation"
+  const consultationLabReturnCount = useMemo(
+    () => queueData.filter((entry) => isLabReturnConsultationEntry(entry.notes)).length,
+    [queueData]
+  )
+  const visibleConsultationQueue = useMemo(() => {
+    if (!isConsultation) return queueData
+    return queueData.filter((entry) =>
+      matchesConsultationOriginFilter(entry.notes, consultationOriginFilter)
+    )
+  }, [queueData, isConsultation, consultationOriginFilter])
   const isPharmacy = servicePoint === "pharmacy"
   const isTriage = servicePoint === "triage"
   const isCashier = servicePoint === "cashier"
@@ -555,9 +581,41 @@ function QueueContent({
     loadQueueData()
   }, [loadQueueData])
 
-  const handleStartConsultation = (patientId: string, patientName: string) => {
-    console.log('handleStartConsultation called:', { patientId, patientName, currentDoctorId })
-    setSelectedPatient({ patientId, patientName })
+  const encounterUnmountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const handleStartConsultation = (entry: {
+    patientId: string
+    patientName: string
+    queueId?: string | number
+    notes?: string
+  }) => {
+    const pid = String(entry.patientId ?? "").trim()
+    if (!pid) {
+      toast({
+        title: "Missing patient",
+        description: "This queue entry has no patient linked. Choose another ticket or fix the queue entry.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (encounterUnmountTimerRef.current) {
+      clearTimeout(encounterUnmountTimerRef.current)
+      encounterUnmountTimerRef.current = null
+    }
+
+    console.log('handleStartConsultation called:', {
+      patientId: pid,
+      patientName: entry.patientName,
+      currentDoctorId,
+      queueId: entry.queueId,
+    })
+    setSelectedPatient({
+      patientId: pid,
+      patientName: entry.patientName,
+      queueId: entry.queueId,
+      labReturnReview: isLabReturnConsultationEntry(entry.notes),
+    })
     setEncounterFormOpen(true)
     console.log('Encounter form state set to open')
   }
@@ -836,6 +894,42 @@ function QueueContent({
           </>
         ) : isConsultation ? (
           <>
+            <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-muted/20">
+              <span className="text-xs text-muted-foreground mr-1">Show:</span>
+              {(
+                [
+                  { id: "all" as const, label: "All waiting" },
+                  { id: "lab_return" as const, label: "From lab", count: consultationLabReturnCount },
+                  { id: "other" as const, label: "Other" },
+                ] as const
+              ).map((chip) => (
+                <Button
+                  key={chip.id}
+                  type="button"
+                  size="sm"
+                  variant={consultationOriginFilter === chip.id ? "default" : "outline"}
+                  className={cn(
+                    "h-7 text-xs",
+                    chip.id === "lab_return" &&
+                      consultationOriginFilter === "lab_return" &&
+                      "bg-sky-600 hover:bg-sky-600"
+                  )}
+                  onClick={() => setConsultationOriginFilter(chip.id)}
+                >
+                  {chip.label}
+                  {"count" in chip && chip.count > 0 ? (
+                    <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px] bg-white/20">
+                      {chip.count}
+                    </Badge>
+                  ) : null}
+                </Button>
+              ))}
+              {consultationLabReturnCount > 0 ? (
+                <span className="text-xs text-sky-800 dark:text-sky-300 ml-auto">
+                  {consultationLabReturnCount} with lab results ready for review
+                </span>
+              ) : null}
+            </div>
             <div className="grid grid-cols-12 bg-muted/50 p-3 text-sm font-medium">
               <div className="col-span-1">#</div>
               <div className="col-span-3">Patient</div>
@@ -847,14 +941,37 @@ function QueueContent({
             </div>
             {loading ? (
               <div className="p-6 text-center text-muted-foreground">Loading queue data...</div>
-            ) : queueData.length > 0 ? (
+            ) : visibleConsultationQueue.length > 0 ? (
               <div className="divide-y">
-                {queueData.map((entry) => {
+                {visibleConsultationQueue.map((entry) => {
                   const hasEncounterToday = encountersToday[entry.patientId] || false
+                  const fromLab = isLabReturnConsultationEntry(entry.notes)
+                  const labOrderRef = labReturnOrderLabel(entry.notes)
+                  const labProgress = labReturnProgressLabel(entry.notes)
                   return (
-                    <div key={entry.id} className="grid grid-cols-12 p-3 text-sm items-center">
+                    <div
+                      key={entry.id}
+                      className={cn(
+                        "grid grid-cols-12 p-3 text-sm items-center",
+                        fromLab &&
+                          "border-l-4 border-l-sky-500 bg-sky-50/70 dark:bg-sky-950/25"
+                      )}
+                    >
                       <div className="col-span-1">{entry.ticketNumber || entry.queueNumber}</div>
-                      <div className="col-span-3 font-medium">{entry.patientName}</div>
+                      <div className="col-span-3 font-medium space-y-1">
+                        <div>{entry.patientName}</div>
+                        {fromLab ? (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] font-normal border-sky-400 text-sky-800 bg-sky-100/80 dark:text-sky-200 dark:bg-sky-950/50"
+                          >
+                            <FlaskConical className="h-3 w-3 mr-1 inline" />
+                            Lab results ready
+                            {labProgress ? ` · ${labProgress}` : ""}
+                            {labOrderRef ? ` · ${labOrderRef}` : ""}
+                          </Badge>
+                        ) : null}
+                      </div>
                       <div className="col-span-2">
                         {entry.servicePointName ? (
                           <Badge variant="outline" className="font-normal">
@@ -879,16 +996,26 @@ function QueueContent({
                       </div>
                       <div className="col-span-2 flex gap-1">
                         <Button
-                          variant={hasEncounterToday ? "outline" : "default"}
+                          variant={fromLab || hasEncounterToday ? "outline" : "default"}
                           size="sm"
                           onClick={(e) => {
                             e.preventDefault()
                             e.stopPropagation()
-                            handleStartConsultation(entry.patientId, entry.patientName)
+                            handleStartConsultation({
+                              patientId: entry.patientId,
+                              patientName: entry.patientName,
+                              queueId: entry.queueId ?? entry.id,
+                              notes: entry.notes,
+                            })
                           }}
-                          className="flex-1"
+                          className={cn("flex-1", fromLab && "border-sky-500 text-sky-900 dark:text-sky-100")}
                         >
-                          {hasEncounterToday ? (
+                          {fromLab ? (
+                            <>
+                              <FlaskConical className="h-3 w-3 mr-1" />
+                              Review results
+                            </>
+                          ) : hasEncounterToday ? (
                             <>
                               <FileText className="h-3 w-3 mr-1" />
                               Continue
@@ -919,6 +1046,17 @@ function QueueContent({
                     </div>
                   )
                 })}
+              </div>
+            ) : queueData.length > 0 ? (
+              <div className="p-6 text-center text-muted-foreground text-sm">
+                No patients match this filter.{" "}
+                <button
+                  type="button"
+                  className="underline text-primary"
+                  onClick={() => setConsultationOriginFilter("all")}
+                >
+                  Show all
+                </button>
               </div>
             ) : (
               <div className="p-6 text-center text-muted-foreground">
@@ -1286,7 +1424,7 @@ function QueueContent({
       </div>
 
       {/* Patient Encounter Form for consultation */}
-      {isConsultation && selectedPatient && (
+      {isConsultation && (encounterFormOpen || selectedPatient) && selectedPatient && (
         <>
           {process.env.NODE_ENV === 'development' && (
             <div className="text-xs text-muted-foreground p-2 bg-muted rounded mb-2">
@@ -1298,19 +1436,44 @@ function QueueContent({
             onOpenChange={(open) => {
               console.log('Encounter form onOpenChange:', open, 'Patient:', selectedPatient?.patientId)
               setEncounterFormOpen(open)
-              if (!open) {
-                setSelectedPatient(null)
+              if (open) {
+                if (encounterUnmountTimerRef.current) {
+                  clearTimeout(encounterUnmountTimerRef.current)
+                  encounterUnmountTimerRef.current = null
+                }
+                return
               }
+              if (encounterUnmountTimerRef.current) {
+                clearTimeout(encounterUnmountTimerRef.current)
+              }
+              encounterUnmountTimerRef.current = window.setTimeout(() => {
+                setSelectedPatient(null)
+                encounterUnmountTimerRef.current = null
+              }, 320)
             }}
             initialPatientId={selectedPatient.patientId}
             initialDoctorId={currentDoctorId}
-            onSuccess={() => {
-              console.log('Encounter saved successfully')
-              // Refresh queue data to update encounter status
+            initialConsultationQueueId={selectedPatient.queueId}
+            labReturnReview={selectedPatient.labReturnReview}
+            onSuccess={async (outcome?: EncounterSaveOutcome) => {
+              const saved = selectedPatient
+              console.log('Encounter saved successfully', outcome)
               setEncountersToday(prev => ({
                 ...prev,
-                [selectedPatient.patientId]: true
+                [saved.patientId]: true,
               }))
+              if (outcome?.sentToLab) {
+                loadQueueData()
+                return
+              }
+              if (saved.queueId != null && saved.queueId !== "") {
+                try {
+                  await queueApi.updateStatus(String(saved.queueId), "completed")
+                } catch (queueErr: any) {
+                  console.warn("Could not mark queue entry completed:", queueErr)
+                }
+              }
+              loadQueueData()
             }}
           />
         </>
