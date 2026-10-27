@@ -16,6 +16,7 @@ import { Loader2, Smartphone } from "lucide-react"
 import { billingApi, patientApi, type MpesaPublicConfig } from "@/lib/api"
 import { MpesaPaybillHint } from "@/components/mpesa-paybill-hint"
 import { pollMpesaStkStatus, startMpesaStkPayment } from "@/lib/mpesa-stk"
+import { emitLabBillingUpdated } from "@/lib/lab-billing-events"
 import { toast } from "@/components/ui/use-toast"
 
 export type ServiceOrderPayTarget = {
@@ -184,6 +185,9 @@ export function MpesaInvoicePayDialog({
           ? `Receipt ${result.mpesaReceiptNumber}. Patient can proceed to service.`
           : "Invoice paid. Patient can proceed to service.",
       })
+      if (serviceOrder?.kind === "lab") {
+        emitLabBillingUpdated()
+      }
       onPaid?.()
       onOpenChange(false)
     } catch (err: any) {

@@ -232,25 +232,6 @@ router.post('/login', loginRateLimit, async (req, res) => {
             }
         }
 
-        const extras = await loadAuthSessionExtras(user);
-
-        try {
-            const [secRows] = await pool.execute(
-                'SELECT requireAdmin2fa FROM system_security_settings WHERE settingId = 1 LIMIT 1'
-            );
-            const requireAdmin2fa = Boolean(secRows[0]?.requireAdmin2fa);
-            const roleName = String(user.role || '').toLowerCase();
-            const isAdmin =
-                roleName.includes('admin') ||
-                roleName === 'system administrator' ||
-                Number(user.roleId) === 1;
-            if (requireAdmin2fa && isAdmin && !user.totpEnabled) {
-                extras.mustSetup2fa = true;
-            }
-        } catch {
-            /* settings table may be missing in older envs */
-        }
-
         try {
             const otpChallenge = await beginLoginOtpChallenge(user);
             if (otpChallenge) {
@@ -272,6 +253,25 @@ router.post('/login', loginRateLimit, async (req, res) => {
                 });
             }
             throw otpErr;
+        }
+
+        const extras = await loadAuthSessionExtras(user);
+
+        try {
+            const [secRows] = await pool.execute(
+                'SELECT requireAdmin2fa FROM system_security_settings WHERE settingId = 1 LIMIT 1'
+            );
+            const requireAdmin2fa = Boolean(secRows[0]?.requireAdmin2fa);
+            const roleName = String(user.role || '').toLowerCase();
+            const isAdmin =
+                roleName.includes('admin') ||
+                roleName === 'system administrator' ||
+                Number(user.roleId) === 1;
+            if (requireAdmin2fa && isAdmin && !user.totpEnabled) {
+                extras.mustSetup2fa = true;
+            }
+        } catch {
+            /* settings table may be missing in older envs */
         }
 
         pool.execute('UPDATE users SET lastLogin = NOW() WHERE userId = ?', [user.userId]).catch((err) => {

@@ -4,6 +4,37 @@
  */
 const { resolveParameterLoinc, resolvePanelLoinc, codingFromLoinc } = require('./loincMap');
 const { FHIR_META_SOURCE, FHIR_AUTHOR_DISPLAY } = require('./productBrand');
+const {
+  fhirProfile,
+  crIdentifierSystem,
+  nationalIdIdentifierSystem,
+  facilityOrganizationId,
+} = require('./fhirKenyaProfiles');
+
+function trimEnv(key) {
+  const v = process.env[key];
+  return v != null && String(v).trim() !== '' ? String(v).trim() : '';
+}
+
+function resolveFrCode(row = {}) {
+  return (
+    row.frCode ||
+    trimEnv('SHR_FACILITY_FR_CODE') ||
+    trimEnv('AFYACONNECT_FACILITY_FR_CODE') ||
+    null
+  );
+}
+
+function organizationReference(row = {}) {
+  const frCode = resolveFrCode(row);
+  const mfl = row.mflCode;
+  const orgId = facilityOrganizationId(frCode || mfl);
+  if (!orgId) return undefined;
+  return {
+    reference: `Organization/${orgId}`,
+    display: row.branchName || undefined,
+  };
+}
 
 function isoDate(value) {
   if (!value) return undefined;
@@ -42,17 +73,17 @@ function buildPatient(row) {
   if (row.nupi) {
     identifiers.push({
       use: 'official',
-      system: 'https://cr.health.go.ke/nupi',
+      system: crIdentifierSystem(),
       value: String(row.nupi),
     });
   }
   if (row.idNumber) {
     identifiers.push({
-      use: 'secondary',
+      use: 'official',
       type: {
         coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'NI', display: 'National unique individual identifier' }],
       },
-      system: 'https://kra.go.ke/national-id',
+      system: nationalIdIdentifierSystem(),
       value: String(row.idNumber),
     });
   }
@@ -73,18 +104,13 @@ function buildPatient(row) {
     });
   }
 
-  const managingOrganization = row.mflCode
-    ? {
-        reference: `Organization/mfl-${row.mflCode}`,
-        display: row.branchName || undefined,
-      }
-    : undefined;
+  const managingOrganization = organizationReference(row);
 
   return {
     resourceType: 'Patient',
     id: `patient-${row.patientId}`,
     meta: {
-      profile: ['http://hl7.org/fhir/StructureDefinition/Patient'],
+      profile: [fhirProfile('Patient')],
       source: FHIR_META_SOURCE,
       lastUpdated: new Date().toISOString(),
     },
@@ -112,7 +138,47 @@ function mapEncounterClass(visitType) {
   return { system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode', code: 'AMB', display: 'ambulatory' };
 }
 
-function buildEncounter(row) {
+function buildOrganization(row = {}) {
+  const frCode = resolveFrCode(row);
+  const orgId = facilityOrganizationId(frCode || row.mflCode);
+  if (!orgId) return null;
+  return {
+    resourceType: 'Organization',
+    id: orgId,
+    meta: {
+      profile: [fhirProfile('Organization')],
+      source: FHIR_META_SOURCE,
+    },
+    identifier: frCode
+      ? [{ system: 'https://fhir.dha.go.ke/fr/fr-code', value: String(frCode) }]
+      : undefined,
+    name: row.branchName || row.officialName || orgId,
+    active: true,
+  };
+}
+
+function buildEpisodeOfCare(row, opts = {}) {
+  const eocId = opts.id || `episodeofcare-${row.recordId}`;
+  const patientFhirId = opts.patientFhirId || `patient-${row.patientId}`;
+  return {
+    resourceType: 'EpisodeOfCare',
+    id: eocId,
+    meta: {
+      profile: [fhirProfile('EpisodeOfCare')],
+      source: FHIR_META_SOURCE,
+      lastUpdated: new Date().toISOString(),
+    },
+    status: 'active',
+    type: [{ text: row.visitType || 'Outpatient' }],
+    patient: { reference: `Patient/${patientFhirId}` },
+    period: { start: isoDateTime(row.visitDate) },
+    managingOrganization: organizationReference(row),
+  };
+}
+
+function buildEncounter(row, opts = {}) {
+  const patientFhirId = opts.patientFhirId || `patient-${row.patientId}`;
+  const encId = opts.id || `encounter-${row.recordId}`;
   const diagnosis = [];
   if (row.diagnosis) {
     diagnosis.push({
@@ -127,9 +193,9 @@ function buildEncounter(row) {
 
   return {
     resourceType: 'Encounter',
-    id: `encounter-${row.recordId}`,
+    id: encId,
     meta: {
-      profile: ['http://hl7.org/fhir/StructureDefinition/Encounter'],
+      profile: [fhirProfile('Encounter')],
       source: FHIR_META_SOURCE,
       lastUpdated: new Date().toISOString(),
     },
@@ -145,18 +211,19 @@ function buildEncounter(row) {
       ? [{ text: String(row.department) }]
       : [{ text: row.visitType || 'Outpatient' }],
     subject: {
-      reference: `Patient/patient-${row.patientId}`,
+      reference: `Patient/${patientFhirId}`,
       display: [row.patientFirstName, row.patientLastName].filter(Boolean).join(' ') || undefined,
     },
+    episodeOfCare: opts.episodeOfCareId
+      ? [{ reference: `EpisodeOfCare/${opts.episodeOfCareId}` }]
+      : undefined,
     period: {
       start: isoDateTime(row.visitDate),
       end: isoDateTime(row.visitDate),
     },
     reasonCode: row.chiefComplaint ? [{ text: String(row.chiefComplaint) }] : undefined,
     diagnosis: diagnosis.length ? diagnosis : undefined,
-    serviceProvider: row.mflCode
-      ? { reference: `Organization/mfl-${row.mflCode}`, display: row.branchName || undefined }
-      : undefined,
+    serviceProvider: organizationReference(row),
   };
 }
 
@@ -188,25 +255,88 @@ function interpretationFromFlag(flag) {
   ];
 }
 
-function buildObservationsFromLabResult(row, values = []) {
+/**
+ * FHIR ServiceRequest for a lab order line (SHR visit graph).
+ */
+function buildLabServiceRequest(row, opts = {}) {
+  const patientFhirId = opts.patientFhirId || `patient-${row.patientId}`;
+  const encRef = opts.encounterFhirId
+    ? { reference: `Encounter/${opts.encounterFhirId}` }
+    : undefined;
+  const panelLoinc = resolvePanelLoinc(row.testCode, row.testName, row.loincCode);
+  const srId = `servicerequest-lab-${row.orderItemId || row.itemId || row.orderId}`;
+  const priorityMap = { stat: 'stat', urgent: 'asap', routine: 'routine' };
+  const priority = priorityMap[String(row.priority || 'routine').toLowerCase()] || 'routine';
+
+  return {
+    resourceType: 'ServiceRequest',
+    id: srId,
+    meta: {
+      profile: [fhirProfile('ServiceRequest')],
+      source: FHIR_META_SOURCE,
+      lastUpdated: new Date().toISOString(),
+    },
+    identifier: [
+      {
+        system: 'http://kakamega.hmis/sid/lab-order-item',
+        value: String(row.orderItemId || row.itemId),
+      },
+      ...(row.orderNumber
+        ? [{ system: 'http://kakamega.hmis/sid/lab-order', value: String(row.orderNumber) }]
+        : []),
+    ],
+    status: 'completed',
+    intent: 'order',
+    priority,
+    category: [
+      {
+        coding: [
+          {
+            system: 'http://snomed.info/sct',
+            code: '108252007',
+            display: 'Laboratory procedure',
+          },
+        ],
+      },
+    ],
+    code: codingFromLoinc(panelLoinc, row.testName || row.testCode || 'Laboratory test'),
+    subject: { reference: `Patient/${patientFhirId}` },
+    encounter: encRef,
+    occurrenceDateTime: isoDateTime(row.orderDate || row.testDate || row.createdAt),
+    authoredOn: isoDateTime(row.orderDate || row.createdAt),
+    reasonCode: row.clinicalIndication ? [{ text: String(row.clinicalIndication).slice(0, 500) }] : undefined,
+    requester: organizationReference(row),
+  };
+}
+
+function buildObservationsFromLabResult(row, values = [], opts = {}) {
   const panelLoinc = resolvePanelLoinc(row.testCode, row.testName, row.loincCode);
   const effective = isoDateTime(row.testDate || row.createdAt);
+  const patientFhirId = opts.patientFhirId || `patient-${row.patientId}`;
   const subject = {
-    reference: `Patient/patient-${row.patientId}`,
+    reference: `Patient/${patientFhirId}`,
     display: [row.patientFirstName, row.patientLastName].filter(Boolean).join(' ') || undefined,
   };
+  const encounterRef = opts.encounterFhirId
+    ? { reference: `Encounter/${opts.encounterFhirId}` }
+    : undefined;
+  const basedOn = opts.serviceRequestFhirId
+    ? [{ reference: `ServiceRequest/${opts.serviceRequestFhirId}` }]
+    : undefined;
   const common = {
     resourceType: 'Observation',
     meta: {
-      profile: ['http://hl7.org/fhir/StructureDefinition/Observation'],
+      profile: [fhirProfile('Observation')],
       source: FHIR_META_SOURCE,
       lastUpdated: new Date().toISOString(),
     },
     status: 'final',
     subject,
+    encounter: encounterRef,
+    basedOn,
     effectiveDateTime: effective,
-    performer: row.mflCode
-      ? [{ reference: `Organization/mfl-${row.mflCode}`, display: row.branchName || undefined }]
+    performer: organizationReference(row)
+      ? [organizationReference(row)]
       : undefined,
   };
 
@@ -601,8 +731,11 @@ function buildPatientConsents(patientId, consentRows = []) {
 
 module.exports = {
   buildPatient,
+  buildOrganization,
+  buildEpisodeOfCare,
   buildEncounter,
   buildObservationsFromLabResult,
+  buildLabServiceRequest,
   buildBundle,
   buildConditionFromProblem,
   buildCarePlanFromProblem,

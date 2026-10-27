@@ -13,6 +13,9 @@ import { IntegrationOutboxPanel } from "@/components/administration/integration-
 import { AuditLogPanel } from "@/components/administration/audit-log-panel"
 import { BreakGlassReportPanel } from "@/components/administration/break-glass-report-panel"
 import { IntegrationRunbookPanel } from "@/components/administration/integration-runbook-panel"
+import { IntegrationProcessBanner } from "@/components/administration/integration-process-banner"
+import { AfyaConnectCoveragePanel } from "@/components/administration/afyaconnect-coverage-panel"
+import { HieSmokeRecorderPanel } from "@/components/administration/hie-smoke-recorder-panel"
 import { NationalIntegrationsPanel } from "@/components/administration/national-integrations-panel"
 import { FhirExchangePanel } from "@/components/administration/fhir-exchange-panel"
 import { ReportingClaimsPanel } from "@/components/administration/reporting-claims-panel"
@@ -126,10 +129,13 @@ export default function AdministrationPage() {
         </TabsContent>
 
         <TabsContent value="system" className="space-y-4 mt-4">
+          <IntegrationProcessBanner />
+          <AfyaConnectCoveragePanel />
+          <NationalIntegrationsPanel />
+          <HieSmokeRecorderPanel />
           <AttestationProductGapPanel />
           <SystemConfiguration />
           <MpesaSettingsPanel />
-          <NationalIntegrationsPanel />
           <FhirExchangePanel />
           <ReportingClaimsPanel />
           {showComplianceAdminTooling() ? (

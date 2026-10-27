@@ -58,6 +58,8 @@ export default function PatientsPage() {
   const [patientPendingTriage, setPatientPendingTriage] = useState<Patient | null>(null)
   const requestIdRef = useRef(0)
 
+  const fromRegistrationDesk = searchParams.get("from") === "registration"
+
   useEffect(() => {
     if (searchParams.get("register") === "1") {
       setEditingPatient(null)
@@ -332,6 +334,7 @@ export default function PatientsPage() {
         open={isFormOpen}
         onOpenChange={setIsFormOpen}
         onSuccess={loadPatients}
+        afterSaveDestination={fromRegistrationDesk ? "registration-desk" : "chart"}
       />
 
       <AddToQueueDialog

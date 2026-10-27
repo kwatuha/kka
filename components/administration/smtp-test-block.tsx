@@ -18,6 +18,7 @@ function authHeaders(): HeadersInit {
 export function SmtpTestBlock() {
   const [smtpTestTo, setSmtpTestTo] = useState("")
   const [smtpTesting, setSmtpTesting] = useState(false)
+  const [integrationAlertTesting, setIntegrationAlertTesting] = useState(false)
 
   const runSmtpTest = async () => {
     const to = smtpTestTo.trim()
@@ -43,7 +44,30 @@ export function SmtpTestBlock() {
     }
   }
 
+  const runIntegrationAlertTest = async () => {
+    try {
+      setIntegrationAlertTesting(true)
+      const res = await fetch("/api/security/integration-alert-test", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({}),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.message || "Integration alert test failed")
+      toast({
+        title: "Integration alert test sent",
+        description: `SMS: ${data.result?.smsSent ?? 0}, email: ${data.result?.emailSent ?? 0}`,
+      })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Integration alert test failed"
+      toast({ title: "Alert test failed", description: message, variant: "destructive" })
+    } finally {
+      setIntegrationAlertTesting(false)
+    }
+  }
+
   return (
+    <div className="space-y-4">
     <div className="space-y-2 rounded-md border p-3">
       <Label htmlFor="security-smtp-test-to" className="text-sm">
         Test facility email (SMTP)
@@ -65,6 +89,23 @@ export function SmtpTestBlock() {
           Send test
         </Button>
       </div>
+    </div>
+    <div className="space-y-2 rounded-md border p-3">
+      <Label className="text-sm">Test integration failure alert (SMS / email)</Label>
+      <p className="text-xs text-muted-foreground">
+        Uses duty mobiles (<code>INTEGRATION_ALERT_SMS</code> or <code>IDSR_ALERT_SMS</code>) and optional alert
+        email. Real failures on outbox or live FHIR also notify the same recipients.
+      </p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={integrationAlertTesting}
+        onClick={() => void runIntegrationAlertTest()}
+      >
+        {integrationAlertTesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+        Send integration alert test
+      </Button>
+    </div>
     </div>
   )
 }

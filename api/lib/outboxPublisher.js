@@ -1,5 +1,6 @@
 const amqp = require('amqplib');
 const pool = require('../config/db');
+const { notifyIntegrationFailure } = require('./integrationFailureAlert');
 
 const EXCHANGE = process.env.RABBITMQ_EXCHANGE || 'hmis.events';
 const POLL_MS = Number(process.env.OUTBOX_POLL_MS || 5000);
@@ -57,13 +58,32 @@ async function publishBatch() {
             [row.outboxId]
           );
         } else {
+          const errMsg = 'Channel buffer full';
+          const [before] = await pool.execute(
+            `SELECT status FROM integration_outbox WHERE outboxId = ? LIMIT 1`,
+            [row.outboxId]
+          );
           await pool.execute(
             `UPDATE integration_outbox
              SET attempts = attempts + 1, lastError = ?,
                  status = IF(attempts + 1 >= 10, 'failed', status)
              WHERE outboxId = ?`,
-            ['Channel buffer full', row.outboxId]
+            [errMsg, row.outboxId]
           );
+          const [after] = await pool.execute(
+            `SELECT status, eventType, attempts FROM integration_outbox WHERE outboxId = ? LIMIT 1`,
+            [row.outboxId]
+          );
+          const prevStatus = before[0]?.status;
+          const next = after[0];
+          if (next?.status === 'failed' && prevStatus !== 'failed') {
+            void notifyIntegrationFailure({
+              channel: 'outbox',
+              referenceId: row.outboxId,
+              summary: `Outbox event failed (${row.eventType || 'event'})`,
+              detail: `${errMsg}; attempts ${next.attempts || '?'}`,
+            }).catch((e) => console.warn('[outbox] failure alert:', e.message || e));
+          }
         }
       }
     } finally {

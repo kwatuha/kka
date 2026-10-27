@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import { useSidebar } from "@/components/ui/sidebar"
-import * as LucideIcons from "lucide-react"
+import { getLucideIcon } from "@/lib/lucide-by-name"
 import { ArrowRight, ChevronDown, LayoutGrid } from "lucide-react"
 import { getNavCategoryChrome } from "@/lib/navigation-category-theme"
 import {
@@ -131,7 +131,7 @@ export function TopNavigation({ onCategoryChange, activeCategory }: TopNavigatio
         {hasQuickLinks && (
           <div className="ml-auto flex shrink-0 items-center gap-1 border-l border-border pl-3">
             {quickLinks.map((link: { label: string; url: string; icon?: string }, idx: number) => {
-              const IconComponent = (LucideIcons as any)[link.icon || "ArrowRight"] || ArrowRight
+              const IconComponent = getLucideIcon(link.icon)
               const active = isQuickLinkActive(link.url || "")
               return (
                 <Link key={`quick-${idx}-${link.url}`} href={link.url || "#"}>

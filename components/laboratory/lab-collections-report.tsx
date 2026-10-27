@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Loader2, RefreshCw, FlaskConical } from "lucide-react"
 import { format } from "date-fns"
+import { onLabBillingUpdated } from "@/lib/lab-billing-events"
 
 function money(amount: number | string | null | undefined) {
   const n = typeof amount === "string" ? parseFloat(amount) : Number(amount || 0)
@@ -39,8 +40,16 @@ function nairobiToday() {
 }
 
 function isLabPayment(row: any) {
+  if (row?.isLabInvoice === 1 || row?.isLabInvoice === true) return true
   const notes = String(row?.notes || "")
-  return /lab payment/i.test(notes) || /lab test/i.test(notes) || /laboratory/i.test(notes)
+  if (/lab payment/i.test(notes) || /lab test/i.test(notes) || /laboratory/i.test(notes)) {
+    return true
+  }
+  const items = row?.items
+  if (Array.isArray(items) && items.some((it: { description?: string }) => /lab test:/i.test(String(it.description || "")))) {
+    return true
+  }
+  return false
 }
 
 export function LabCollectionsReport() {
@@ -68,6 +77,8 @@ export function LabCollectionsReport() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => onLabBillingUpdated(() => void load()), [load])
 
   const labPayments = useMemo(
     () => (summary?.payments || []).filter(isLabPayment),

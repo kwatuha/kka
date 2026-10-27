@@ -3,6 +3,10 @@
  */
 const pool = require('../config/db');
 const { getDhaSandboxSmoke } = require('./dhaSandboxSmoke');
+const { isAfyaConnectConfigured, getAfyaConnectPublicStatus } = require('./afyaConnectAuth');
+const { getShrConfig } = require('./shrConsent');
+const { isShrPublishGateEnabled } = require('./shrPublishGate');
+const { isIntegrationAlertEnabled } = require('./integrationFailureAlert');
 
 async function loadRegistrySettings() {
   try {
@@ -36,11 +40,31 @@ async function getHieLiveReadiness() {
   const crMode = (process.env.CLIENT_REGISTRY_MODE || reg.clientRegistryMode || 'sandbox').toLowerCase();
   const fhirUrl = envOrDb('FHIR_BASE_URL', reg.fhirBaseUrl);
   const crUrl = envOrDb('CLIENT_REGISTRY_BASE_URL', reg.clientRegistryBaseUrl);
+  const frMode = (process.env.FACILITY_REGISTRY_MODE || reg.facilityRegistryMode || 'sandbox').toLowerCase();
+  const frUrl =
+    envOrDb('FACILITY_REGISTRY_BASE_URL', reg.facilityRegistryBaseUrl) || crUrl;
   const fhirKey = Boolean(process.env.FHIR_API_KEY || reg.fhirApiKey);
   const crKey = Boolean(process.env.CLIENT_REGISTRY_API_KEY);
+  const afyaStatus = getAfyaConnectPublicStatus();
+  const oauthReady = isAfyaConnectConfigured();
+  const crAuthReady = oauthReady || crKey;
+  const fhirAuthReady = oauthReady || fhirKey;
   const rabbit = Boolean(process.env.RABBITMQ_URL);
+  const shrCfg = getShrConfig();
 
   const items = [
+    {
+      id: 'afyaconnect_oauth',
+      label: 'AfyaConnect OAuth (Consumer Key/Secret + token URL)',
+      ready: oauthReady,
+      category: 'AfyaConnect',
+    },
+    {
+      id: 'cr_agent',
+      label: 'Client Registry agent ID configured (fetch-client)',
+      ready: afyaStatus.agentConfigured,
+      category: 'Client Registry',
+    },
     {
       id: 'fhir_url',
       label: 'FHIR / OpenHIM channel base URL configured',
@@ -49,8 +73,8 @@ async function getHieLiveReadiness() {
     },
     {
       id: 'fhir_auth',
-      label: 'FHIR API key or channel auth configured',
-      ready: fhirKey,
+      label: 'FHIR auth configured (AfyaConnect OAuth or API key)',
+      ready: fhirAuthReady,
       category: 'FHIR',
     },
     {
@@ -67,8 +91,8 @@ async function getHieLiveReadiness() {
     },
     {
       id: 'cr_auth',
-      label: 'Client Registry API key configured',
-      ready: crKey,
+      label: 'Client Registry auth configured (AfyaConnect OAuth or API key)',
+      ready: crAuthReady,
       category: 'Client Registry',
     },
     {
@@ -78,9 +102,51 @@ async function getHieLiveReadiness() {
       category: 'Client Registry',
     },
     {
+      id: 'fr_url',
+      label: 'Facility Registry base URL configured',
+      ready: Boolean(frUrl),
+      category: 'Facility Registry',
+    },
+    {
+      id: 'fr_auth',
+      label: 'Facility Registry auth configured (AfyaConnect OAuth or API key)',
+      ready: oauthReady || Boolean(process.env.FACILITY_REGISTRY_API_KEY),
+      category: 'Facility Registry',
+    },
+    {
+      id: 'fr_mode_live',
+      label: 'Facility Registry mode set to live',
+      ready: frMode === 'live',
+      category: 'Facility Registry',
+    },
+    {
+      id: 'shr_facility_fr_code',
+      label: 'SHR facility fr-code configured (SHR_FACILITY_FR_CODE or branch frCode)',
+      ready: Boolean(shrCfg.facilityFrCode),
+      category: 'SHR consent/read',
+    },
+    {
+      id: 'shr_practitioner_puid',
+      label: 'SHR practitioner PUID configured (consent + read)',
+      ready: Boolean(shrCfg.defaultPractitionerPuid),
+      category: 'SHR consent/read',
+    },
+    {
+      id: 'shr_publish_gate',
+      label: 'Live SHR publish gated on national consent (SHR_REQUIRE_CONSENT_FOR_PUBLISH)',
+      ready: isShrPublishGateEnabled(),
+      category: 'SHR consent/read',
+    },
+    {
       id: 'event_bus',
       label: 'RabbitMQ event bus (optional but recommended for outbox)',
       ready: rabbit,
+      category: 'Infrastructure',
+    },
+    {
+      id: 'integration_failure_alert',
+      label: 'Admin SMS/email alert on integration failure (outbox / FHIR live)',
+      ready: isIntegrationAlertEnabled(),
       category: 'Infrastructure',
     },
     {
@@ -96,7 +162,8 @@ async function getHieLiveReadiness() {
 
   return {
     generatedAt: new Date().toISOString(),
-    modes: { fhir: fhirMode, clientRegistry: crMode },
+    modes: { fhir: fhirMode, clientRegistry: crMode, facilityRegistry: frMode },
+    afyaConnect: afyaStatus,
     items,
     readyCount,
     totalScored: scored.length,

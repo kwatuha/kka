@@ -4,6 +4,11 @@ const router = express.Router();
 const pool = require('../config/db');
 const { enqueueOutboxEvent } = require('../lib/integrationOutbox');
 const { shouldAutoPublish, publishEncounter } = require('../lib/fhirMediator');
+const { attachMedicalRecordToActiveSession } = require('../lib/shrVisitSessions');
+const {
+    attachMedicalRecordToActiveShaSession,
+    syncNationalClaimDiagnosisFromEncounter,
+} = require('../lib/shaEclaimsEncounterLink');
 const { evaluateAndPublish: evaluateIdsr } = require('../lib/idsrPublisher');
 const { auditFromRequest } = require('../lib/auditLog');
 
@@ -293,10 +298,33 @@ router.post('/', async (req, res) => {
         await connection.commit();
 
         try {
+            await attachMedicalRecordToActiveSession(patientId, result.insertId);
+        } catch (linkErr) {
+            console.warn('[medical-records] SHR session link skipped:', linkErr.message || linkErr);
+        }
+
+        let shaClaimsLink = null;
+        try {
+            await attachMedicalRecordToActiveShaSession(patientId, result.insertId);
+            shaClaimsLink = await syncNationalClaimDiagnosisFromEncounter(pool, {
+                patientId: Number(patientId),
+                medicalRecordId: result.insertId,
+                req,
+            });
+        } catch (linkErr) {
+            console.warn('[medical-records] SHA claims link skipped:', linkErr.message || linkErr);
+        }
+
+        let fhirPublish = null;
+        try {
             if (await shouldAutoPublish(pool)) {
-                await publishEncounter(pool, result.insertId);
+                fhirPublish = await publishEncounter(pool, result.insertId);
+                if (fhirPublish?.skipped && fhirPublish.reason) {
+                    console.warn('[medical-records] FHIR publish skipped:', fhirPublish.reason);
+                }
             }
         } catch (fhirErr) {
+            fhirPublish = { status: 'failed', error: fhirErr.message || String(fhirErr) };
             console.warn('[medical-records] FHIR publish skipped:', fhirErr.message || fhirErr);
         }
 
@@ -313,7 +341,7 @@ router.post('/', async (req, res) => {
             console.warn('[medical-records] IDSR evaluate skipped:', idsrErr.message || idsrErr);
         }
 
-        res.status(201).json(newRecord[0]);
+        res.status(201).json({ ...newRecord[0], fhirPublish, shaClaimsLink });
     } catch (error) {
         await connection.rollback();
         console.error('Error creating medical record:', error);
@@ -483,6 +511,19 @@ router.put('/:id', async (req, res) => {
 
         await connection.commit();
 
+        let shaClaimsLink = null;
+        try {
+            const row = updatedRecord[0];
+            await attachMedicalRecordToActiveShaSession(row.patientId, row.recordId);
+            shaClaimsLink = await syncNationalClaimDiagnosisFromEncounter(pool, {
+                patientId: row.patientId,
+                medicalRecordId: row.recordId,
+                req,
+            });
+        } catch (linkErr) {
+            console.warn('[medical-records] SHA claims sync skipped:', linkErr.message || linkErr);
+        }
+
         if (idsrTextChanged) {
             try {
                 const row = updatedRecord[0];
@@ -499,7 +540,25 @@ router.put('/:id', async (req, res) => {
             }
         }
 
-        res.status(200).json(updatedRecord[0]);
+        let fhirPublish = null;
+        const closingEncounter =
+            !encounterInProgress &&
+            (outcome !== undefined ? Boolean(outcome) : Boolean(updatedRecord[0]?.outcome));
+        if (closingEncounter) {
+            try {
+                if (await shouldAutoPublish(pool)) {
+                    fhirPublish = await publishEncounter(pool, Number(req.params.id));
+                    if (fhirPublish?.skipped && fhirPublish.reason) {
+                        console.warn('[medical-records] FHIR publish skipped:', fhirPublish.reason);
+                    }
+                }
+            } catch (fhirErr) {
+                fhirPublish = { status: 'failed', error: fhirErr.message || String(fhirErr) };
+                console.warn('[medical-records] FHIR publish on update:', fhirErr.message || fhirErr);
+            }
+        }
+
+        res.status(200).json({ ...updatedRecord[0], fhirPublish, shaClaimsLink });
     } catch (error) {
         await connection.rollback();
         console.error('Error updating medical record:', error);

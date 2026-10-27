@@ -6,7 +6,6 @@ import {
   CalendarDays,
   Droplets,
   Stethoscope,
-  Waveform,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -510,7 +509,7 @@ export default function RenalDialysisPage() {
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-medium">Machines Available</CardTitle>
-              <Waveform className="h-4 w-4 text-muted-foreground" />
+              <Activity className="h-4 w-4 text-muted-foreground" />
             </div>
             <CardDescription className="text-xs">Ready for dialysis</CardDescription>
           </CardHeader>

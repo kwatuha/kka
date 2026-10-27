@@ -93,6 +93,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { patientApi, doctorsApi, pharmacyApi, laboratoryApi, medicalRecordsApi, billingApi, proceduresApi, serviceChargeApi, appointmentsApi, queueApi, radiologyApi, mortuaryApi, clinicalCdsApi } from "@/lib/api"
+import { notifyFhirPublish } from "@/lib/notify-fhir-publish"
 import { AddAdmissionForm } from "@/components/add-admission-form"
 import { PatientDocuments } from "@/components/patient-documents"
 import { PatientAlliedHealthOrders } from "@/components/patient-allied-health-orders"
@@ -743,6 +744,13 @@ export function PatientEncounterForm({
         const created = await medicalRecordsApi.create({ ...payload, saveAsDraft: true })
         if (created?.recordId) {
           const id = Number(created.recordId)
+          if (typeof window !== "undefined" && data.patientId) {
+            window.dispatchEvent(
+              new CustomEvent("hmis-encounter-saved", {
+                detail: { patientId: data.patientId, recordId: id },
+              })
+            )
+          }
           setTodayEncounterRecordId(id)
           todayEncounterRecordIdRef.current = id
         }
@@ -1785,6 +1793,15 @@ export function PatientEncounterForm({
         setTodayEncounterRecordId(Number(medicalRecord.recordId))
         todayEncounterRecordIdRef.current = Number(medicalRecord.recordId)
       }
+      const savedRecordId = medicalRecord?.recordId || existingId
+      if (savedRecordId && typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("hmis-encounter-saved", {
+            detail: { patientId: data.patientId, recordId: Number(savedRecordId) },
+          })
+        )
+      }
+      notifyFhirPublish(toast, medicalRecord?.fhirPublish)
 
       if (addDiagnosesToProblemList && medicalRecord?.recordId) {
         const problemsToAdd =
@@ -1917,6 +1934,7 @@ export function PatientEncounterForm({
             priority: testList[0]?.priority || 'routine',
             clinicalIndication: testList.map(t => t.clinicalIndication).filter(Boolean).join('; ') || null,
             status: 'pending',
+            medicalRecordId: medicalRecord?.recordId ? Number(medicalRecord.recordId) : undefined,
             items: testList.map(test => ({
               testTypeId: parseInt(test.testTypeId),
               notes: test.clinicalIndication || null,
@@ -6116,6 +6134,8 @@ const clearDraftFromStorage = (patientId:any) => {
                           clinicalIndication: tempLabTest.clinicalIndication || null,
                           status: 'pending',
                           labId: parseInt(tempLabTest.labId),
+                          medicalRecordId:
+                            todayEncounterRecordIdRef.current || todayEncounterRecordId || undefined,
                           items: [{
                             testTypeId: parseInt(tempLabTest.testTypeId),
                             notes: tempLabTest.clinicalIndication || null,

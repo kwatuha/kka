@@ -80,11 +80,15 @@ router.get('/', async (req, res) => {
         if (search) {
             query += ` AND (
                 p.firstName LIKE ? OR p.lastName LIKE ? OR p.patientNumber LIKE ? OR p.phone LIKE ? OR REPLACE(REPLACE(p.phone, ' ', ''), '-', '') LIKE ?
-                OR p.email LIKE ? OR p.idNumber LIKE ? OR CONCAT(p.firstName, ' ', p.lastName) LIKE ?
+                OR p.email LIKE ? OR p.idNumber LIKE ? OR p.nupi LIKE ?
+                OR CONCAT(p.firstName, ' ', p.lastName) LIKE ?
             )`;
             const searchTerm = `%${search}%`;
             const compactSearchTerm = `%${String(search).replace(/[\s-]/g, '')}%`;
-            params.push(searchTerm, searchTerm, searchTerm, searchTerm, compactSearchTerm, searchTerm, searchTerm, searchTerm);
+            params.push(
+                searchTerm, searchTerm, searchTerm, searchTerm, compactSearchTerm,
+                searchTerm, searchTerm, searchTerm, searchTerm
+            );
         }
 
         query += ` ORDER BY p.createdAt DESC LIMIT ${limitNum} OFFSET ${offset}`;
@@ -689,6 +693,7 @@ router.post('/', async (req, res) => {
           if (auto && !patientData.nupi && (patientData.idNumber || patientData.phone)) {
             let cr = await resolveClient(connection, {
               idNumber: patientData.idNumber,
+              idType: patientData.idType,
               phone: patientData.phone,
               firstName: patientData.firstName,
               lastName: patientData.lastName,

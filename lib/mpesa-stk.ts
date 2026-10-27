@@ -44,6 +44,21 @@ export async function pollMpesaStkStatus(
           /* callback may still be applying */
         }
       }
+      const applyDeadline = Date.now() + 20_000
+      while (Date.now() < applyDeadline) {
+        const applied = await billingApi.getMpesaStkStatus(checkoutRequestId)
+        if (applied.appliedAt || applied.status === "applied") {
+          return { ...applied, status: "applied" as const }
+        }
+        if (applied.status === "success" && !applied.appliedAt) {
+          try {
+            await billingApi.finalizeMpesaStk(checkoutRequestId)
+          } catch {
+            /* retry apply */
+          }
+        }
+        await sleep(600)
+      }
       return status
     }
     if (status.status === "failed") {

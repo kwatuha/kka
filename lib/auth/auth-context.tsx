@@ -4,6 +4,7 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import type { UserRole } from "./permissions"
 import type { Branch, User } from "./auth-service"
 import { invalidateRoleMenuAccessCache } from "@/lib/hooks/use-role-menu-access"
+import { authApiUrl } from "@/lib/auth/api-url"
 
 interface AuthContextType {
   user: User | null
@@ -35,7 +36,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-const LOGIN_TIMEOUT_MS = 8000
+/** Login may include DB session load + SMS/email OTP delivery on slow networks. */
+const LOGIN_TIMEOUT_MS = 35000
 const VERIFY_TIMEOUT_MS = 2500
 
 function normalizePrivileges(raw: unknown): Array<{ privilegeName: string; module?: string }> {
@@ -174,8 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(false)
       }
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || ""
-      const verifyUrl = apiUrl ? `${apiUrl}/api/auth/verify` : "/api/auth/verify"
+      const verifyUrl = authApiUrl("/api/auth/verify")
 
       try {
         const controller = new AbortController()
@@ -255,17 +256,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(true)
 
       try {
-        const apiUrl =
-          typeof window !== "undefined"
-            ? process.env.NEXT_PUBLIC_API_URL || ""
-            : process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"
-
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), LOGIN_TIMEOUT_MS)
 
         let response: Response
         try {
-          response = await fetch(`${apiUrl}/api/auth/login`, {
+          response = await fetch(authApiUrl("/api/auth/login"), {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -315,14 +311,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const configuredApi = Boolean((process.env.NEXT_PUBLIC_API_URL || "").trim())
         const isProdBuild = process.env.NODE_ENV === "production"
         if (apiError?.name === "AbortError") {
-          return { success: false, error: "Login timed out. Check network or API availability and try again." }
+          return {
+            success: false,
+            error:
+              "Login timed out. The server may be sending an SMS verification code — wait and try again, or ask an admin to check API/SMS connectivity.",
+          }
         }
         console.error("HMIS API login request failed:", apiError)
         if (isProdBuild || configuredApi) {
           return {
             success: false,
             error:
-              "Cannot reach the HMIS API from this page. Check that NEXT_PUBLIC_API_URL matches where the API is reachable (e.g. http://YOUR_IP:3001 when using published ports). If the page is HTTPS but NEXT_PUBLIC_API_URL is http://, the browser blocks the request — use HTTPS for the API or same-origin proxy.",
+              "Cannot reach the HMIS API from this browser. On https://hmis.azimkim.co.ke use same-origin /api (leave NEXT_PUBLIC_API_URL empty at build). If using port :5400 for UI, API should be on :3222.",
           }
         }
         return {
@@ -342,16 +342,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const verifyLoginOtp = async (challengeId: string, code: string) => {
     try {
       setIsLoading(true)
-      const apiUrl =
-        typeof window !== "undefined"
-          ? process.env.NEXT_PUBLIC_API_URL || ""
-          : process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"
-
-      const response = await fetch(`${apiUrl}/api/auth/login/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challengeId, loginOtpCode: code }),
-      })
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), LOGIN_TIMEOUT_MS)
+      let response: Response
+      try {
+        response = await fetch(authApiUrl("/api/auth/login/verify-otp"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ challengeId, loginOtpCode: code }),
+          signal: controller.signal,
+        })
+      } finally {
+        clearTimeout(timeoutId)
+      }
 
       if (response.ok) {
         const data = await response.json()
@@ -371,7 +374,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         error: errorData.message || errorData.error || "Invalid verification code",
         challengeId: errorData.challengeId || challengeId,
       }
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return { success: false, error: "Verification timed out. Try again." }
+      }
       return { success: false, error: "Could not verify code. Try again." }
     } finally {
       setIsLoading(false)

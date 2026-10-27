@@ -7,6 +7,8 @@ import { laboratoryApi } from "@/lib/api"
 import { useAuth } from "@/lib/auth/auth-context"
 import { useFacilityUnits } from "@/lib/hooks/use-facility-units"
 import { toast } from "@/components/ui/use-toast"
+import { notifyFhirPublish, type FhirPublishPayload } from "@/lib/notify-fhir-publish"
+import { onLabBillingUpdated } from "@/lib/lab-billing-events"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -83,6 +85,8 @@ export function LabResultsWorkbench() {
     loadOrders()
   }, [loadOrders])
 
+  useEffect(() => onLabBillingUpdated(() => void loadOrders()), [loadOrders])
+
   const filteredOrders = orders.filter((order) => {
     if (!search.trim()) {
       return order.status !== "cancelled"
@@ -124,11 +128,12 @@ export function LabResultsWorkbench() {
     if (!orderForResults) return
     setSavingResults(true)
     try {
-      await laboratoryApi.createResult(String(orderForResults.orderId), data)
+      const saved = await laboratoryApi.createResult(String(orderForResults.orderId), data)
       toast({
         title: "Results saved",
         description: "Laboratory results were recorded successfully.",
       })
+      notifyFhirPublish(toast, (saved as { fhirPublish?: FhirPublishPayload | null })?.fhirPublish)
       setResultsFormOpen(false)
       setOrderForResults(null)
       setOrderItems([])

@@ -52,16 +52,16 @@ export function RegistrationDesk() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button asChild size="sm">
-            <Link href="/patients">
+            <Link href="/patients?from=registration">
               <Search className="mr-2 h-4 w-4" />
-              Search / register
+              Search / register (CR first)
             </Link>
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => router.push("/patients?register=1")}
+            onClick={() => router.push("/patients?register=1&from=registration")}
           >
             <UserPlus className="mr-2 h-4 w-4" />
             New patient

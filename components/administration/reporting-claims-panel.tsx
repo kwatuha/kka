@@ -17,6 +17,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { toast } from "@/components/ui/use-toast"
 import { cqmApi, ihrApi } from "@/lib/api"
 import { downloadCqmAssessorPdf } from "@/lib/cqm-assessor-pdf"
@@ -389,6 +390,35 @@ export function ReportingClaimsPanel() {
           </div>
         ) : (
           <>
+            <Alert id="sha-sandbox-claims" className="border-amber-300 bg-amber-50/90 dark:border-amber-900 dark:bg-amber-950/40">
+              <AlertTitle className="text-sm">Where to test SHA claims (sandbox — not national visit API)</AlertTitle>
+              <AlertDescription className="mt-2 space-y-2 text-xs">
+                <ol className="list-decimal space-y-1 pl-4">
+                  <li>
+                    Register or open an <strong>insurance</strong> patient with an active SHA/NHIF policy (
+                    <span className="text-muted-foreground">Insurance management</span> if needed).
+                  </li>
+                  <li>
+                    Bill a visit: <strong>Billing</strong> module → open the invoice →{" "}
+                    <strong>Create insurance claim</strong> (Insurance section on the invoice dialog). Note the{" "}
+                    <strong>Claim ID</strong> number.
+                  </li>
+                  <li>
+                    Or: patient chart → <strong>Billing</strong> tab → invoice → same create-claim flow.
+                  </li>
+                  <li>
+                    Return here: set SHA mode to <strong>Sandbox</strong> → Save modes → enter Claim ID →{" "}
+                    <strong>Submit to SHA</strong>. Check preview JSON and the submissions table below.
+                  </li>
+                </ol>
+                <p className="text-muted-foreground">
+                  Official AfyaConnect UAT uses <code className="text-[10px]">POST /claims/visit</code>, preauth, and{" "}
+                  <code className="text-[10px]">/claims/submit</code> — not wired in HMIS yet. See{" "}
+                  <code className="text-[10px]">docs/DHA_AFYACONNECT_INTEGRATION_COVERAGE.md</code> §4 and §6.
+                </p>
+              </AlertDescription>
+            </Alert>
+
             <div className="grid gap-4 md:grid-cols-3">
               <ModeCard
                 title="IDSR"
@@ -491,6 +521,16 @@ export function ReportingClaimsPanel() {
                     MOH 717/705/710 export
                   </Button>
                 </div>
+                <Alert className="mt-2">
+                  <AlertTitle className="text-sm">Test SHA claim (sandbox)</AlertTitle>
+                  <AlertDescription className="text-xs space-y-1">
+                    <p>
+                      1. Bill a visit → create insurance claim (SHA provider) from the invoice.
+                      2. Copy the claim ID here → Submit to SHA. This is not the full AfyaConnect visit/claim
+                      UAT — see docs/DHA_AFYACONNECT_INTEGRATION_COVERAGE.md §4.
+                    </p>
+                  </AlertDescription>
+                </Alert>
                 <div className="flex flex-wrap gap-2">
                   <Input
                     className="max-w-[120px]"

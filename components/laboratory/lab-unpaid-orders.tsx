@@ -197,7 +197,10 @@ export function LabUnpaidOrders() {
               }
             : null
         }
-        onPaid={() => void load()}
+        onPaid={() => {
+          void load()
+          window.setTimeout(() => void load(), 1200)
+        }}
       />
 
       <LabOrderActionDialog

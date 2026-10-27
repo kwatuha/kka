@@ -4,6 +4,7 @@
 const { smtpConfigured, defaultFrom } = require('./smtpMailer');
 const { parseAlertEmails, isIdsrEmailEnabled } = require('./idsrAlertEmail');
 const { isAdvantaConfigured } = require('./advantaSms');
+const { getIntegrationAlertStatus } = require('./integrationFailureAlert');
 
 function getMessagingComplianceStatus() {
   const smtp = smtpConfigured();
@@ -36,6 +37,7 @@ function getMessagingComplianceStatus() {
       advantaConfigured: isAdvantaConfigured(),
       smsEnabled: String(process.env.SMS_ENABLED || 'true').toLowerCase() !== 'false',
     },
+    integrationFailureAlert: getIntegrationAlertStatus(),
   };
 }
 

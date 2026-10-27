@@ -101,7 +101,8 @@ export function IntegrationOutboxPanel() {
           <CardTitle>Integration outbox (RabbitMQ)</CardTitle>
           <CardDescription>
             Integration event spine — patient, encounter, lab, and claim events published to{" "}
-            <code>hmis.events</code>. Broker:{" "}
+            <code>hmis.events</code>. Failed outbox rows trigger SMS/email to duty numbers when{" "}
+            <code>INTEGRATION_ALERT_SMS</code> or <code>IDSR_ALERT_SMS</code> is set. Broker:{" "}
             {rabbitmqConfigured ? (
               <Badge variant="default">configured</Badge>
             ) : (

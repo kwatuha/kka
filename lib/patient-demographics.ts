@@ -4,6 +4,7 @@ export const PATIENT_ID_TYPES = [
   "National ID",
   "Passport",
   "Birth Certificate",
+  "Client Registry ID",
   "Driver's License",
   "Other",
 ] as const
@@ -12,6 +13,7 @@ export type PatientIdType = (typeof PATIENT_ID_TYPES)[number]
 
 export const NEXT_OF_KIN_RELATIONSHIPS = [
   "Parent",
+  "Guardian",
   "Spouse",
   "Child",
   "Sibling",

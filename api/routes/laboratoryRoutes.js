@@ -269,7 +269,7 @@ router.post('/orders', async (req, res) => {
     try {
         await connection.beginTransaction();
 
-        const { orderNumber, patientId, admissionId, orderedBy, orderDate, priority, status, clinicalNotes, clinicalIndication, items, testTypes, labId: bodyLabId, branchId: bodyBranchId } = req.body;
+        const { orderNumber, patientId, admissionId, medicalRecordId, orderedBy, orderDate, priority, status, clinicalNotes, clinicalIndication, items, testTypes, labId: bodyLabId, branchId: bodyBranchId } = req.body;
         const userId = req.user?.id || req.user?.userId || null;
 
         const scope = await resolveFacilityScope(connection, req, { body: req.body });
@@ -382,9 +382,21 @@ router.post('/orders', async (req, res) => {
             // Number doesn't exist, try to insert
             try {
                 [result] = await connection.execute(
-                    `INSERT INTO lab_test_orders (orderNumber, patientId, admissionId, orderedBy, orderDate, priority, status, clinicalIndication, branchId, labId)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [finalOrderNum, patientId, admissionId || null, orderedBy, orderDate || new Date(), priority || 'routine', status || 'pending', clinicalInfo, branchId, labId]
+                    `INSERT INTO lab_test_orders (orderNumber, patientId, admissionId, medicalRecordId, orderedBy, orderDate, priority, status, clinicalIndication, branchId, labId)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        finalOrderNum,
+                        patientId,
+                        admissionId || null,
+                        medicalRecordId ? Number(medicalRecordId) : null,
+                        orderedBy,
+                        orderDate || new Date(),
+                        priority || 'routine',
+                        status || 'pending',
+                        clinicalInfo,
+                        branchId,
+                        labId,
+                    ]
                 );
                 orderId = result.insertId;
                 break; // Success, exit loop
@@ -976,11 +988,22 @@ router.post('/orders/:id/results', async (req, res) => {
             });
         }
 
+        const hasValues = values && Array.isArray(values) && values.length > 0;
+        const initialStatus = hasValues ? 'verified' : 'pending';
+
         // Create result
         const [resultInsert] = await connection.execute(
-            `INSERT INTO lab_test_results (orderItemId, testDate, status, notes, performedBy)
-             VALUES (?, ?, 'pending', ?, ?)`,
-            [orderItemId, testDate || new Date(), notes || null, performedBy || null]
+            `INSERT INTO lab_test_results (orderItemId, testDate, status, notes, performedBy, verifiedBy, verifiedAt)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+                orderItemId,
+                testDate || new Date(),
+                initialStatus,
+                notes || null,
+                performedBy || userId || null,
+                hasValues && userId ? userId : null,
+                hasValues && userId ? new Date() : null,
+            ]
         );
 
         const resultId = resultInsert.insertId;
@@ -1065,11 +1088,20 @@ router.post('/orders/:id/results', async (req, res) => {
 
         await connection.commit();
 
+        let fhirPublish = null;
         try {
-            if (await shouldAutoPublish(pool)) {
-                await publishLabObservation(pool, resultId);
+            if (hasValues && (await shouldAutoPublish(pool))) {
+                fhirPublish = await publishLabObservation(pool, resultId);
+                if (fhirPublish?.skipped && fhirPublish.reason) {
+                    console.warn('[laboratory] FHIR publish skipped:', fhirPublish.reason);
+                }
+            } else if (hasValues) {
+                fhirPublish = { skipped: true, reason: 'Auto-publish disabled in FHIR settings' };
+            } else {
+                fhirPublish = { skipped: true, reason: 'Add result values before national FHIR publish' };
             }
         } catch (fhirErr) {
+            fhirPublish = { status: 'failed', error: fhirErr.message || String(fhirErr) };
             console.warn('[laboratory] FHIR Observation publish skipped:', fhirErr.message || fhirErr);
         }
 
@@ -1123,7 +1155,7 @@ router.post('/orders/:id/results', async (req, res) => {
             console.error('[SMS] lab result create notify skipped:', smsErr.message || smsErr);
         }
 
-        res.status(201).json(result[0]);
+        res.status(201).json({ ...result[0], fhirPublish });
     } catch (error) {
         await connection.rollback();
         console.error('Error creating lab result:', error);

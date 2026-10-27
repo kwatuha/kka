@@ -32,6 +32,7 @@ const branchSchema = z.object({
   branchCode: z.string().optional(),
   branchName: z.string().min(1, "Branch name is required"),
   mflCode: z.string().optional(),
+  frCode: z.string().optional(),
   kephLevel: z.string().optional(),
   letterheadTitle: z.string().optional(),
   address: z.string().optional(),
@@ -65,6 +66,7 @@ export function BranchForm({ open, onOpenChange, onSuccess, editData }: BranchFo
       branchCode: "",
       branchName: "",
       mflCode: "",
+      frCode: "",
       kephLevel: "",
       letterheadTitle: "",
       address: "",
@@ -89,6 +91,7 @@ export function BranchForm({ open, onOpenChange, onSuccess, editData }: BranchFo
           branchCode: editData.branchCode || "",
           branchName: editData.branchName || "",
           mflCode: editData.mflCode || "",
+          frCode: editData.frCode || "",
           kephLevel: editData.kephLevel || "",
           letterheadTitle: editData.letterheadTitle || "",
           address: editData.address || "",
@@ -108,6 +111,7 @@ export function BranchForm({ open, onOpenChange, onSuccess, editData }: BranchFo
           branchCode: "",
           branchName: "",
           mflCode: "",
+          frCode: "",
           kephLevel: "",
           letterheadTitle: "",
           address: "",
@@ -133,6 +137,7 @@ export function BranchForm({ open, onOpenChange, onSuccess, editData }: BranchFo
       const payload: any = {
         branchName: data.branchName,
         mflCode: data.mflCode || undefined,
+        frCode: data.frCode || undefined,
         kephLevel: data.kephLevel || undefined,
         letterheadTitle: data.letterheadTitle || undefined,
         address: data.address || undefined,
@@ -239,6 +244,20 @@ export function BranchForm({ open, onOpenChange, onSuccess, editData }: BranchFo
                       <Input placeholder="e.g., 15915" {...field} />
                     </FormControl>
                     <FormDescription>Kenya Master Facility List code</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="frCode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Facility Registry code (FID)</FormLabel>
+                    <FormControl>
+                      <Input placeholder="e.g., FID-47-105963-0" {...field} />
+                    </FormControl>
+                    <FormDescription>Used for SHR consent and FHIR bundles</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

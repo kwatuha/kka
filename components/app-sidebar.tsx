@@ -13,7 +13,7 @@ import { useRoleMenuAccess } from "@/lib/hooks/use-role-menu-access"
 import { filterSidebarItems } from "@/lib/role-menu-filter"
 import { applyExperiencePackToItems } from "@/lib/experience-pack-scope"
 import { isMobileAppPromoHidden } from "@/lib/dha-cert-scope"
-import * as LucideIcons from "lucide-react"
+import { getLucideIcon } from "@/lib/lucide-by-name"
 import {
   HelpCircle,
   ArrowRight,
@@ -252,7 +252,7 @@ export const AppSidebar = memo(function AppSidebar({ activeCategory }: AppSideba
               <SidebarGroupContent>
                 <SidebarMenu>
                   {quickLinks.map((link: { label: string; url: string; icon?: string }, idx: number) => {
-                    const IconComponent = (LucideIcons as any)[link.icon || "ArrowRight"] || ArrowRight
+                    const IconComponent = getLucideIcon(link.icon)
                     const active = isQuickLinkActive(link.url || "")
                     return (
                       <SidebarMenuItem key={`quick-${idx}-${link.url}`}>

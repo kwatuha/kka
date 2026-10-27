@@ -4408,15 +4408,16 @@ router.post('/branches', async (req, res) => {
 
         const [result] = await pool.execute(
             `INSERT INTO branches (
-                branchCode, branchName, mflCode, kephLevel, letterheadTitle, address, postalAddress,
+                branchCode, branchName, mflCode, frCode, kephLevel, letterheadTitle, address, postalAddress,
                 phone, email, website, logoUrl, receiptHeader, receiptFooter,
                 isMainBranch, isActive, notes
              )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 branchData.branchCode,
                 branchData.branchName,
                 branchData.mflCode || null,
+                branchData.frCode || null,
                 branchData.kephLevel || null,
                 branchData.letterheadTitle || null,
                 branchData.address || null,
@@ -4465,6 +4466,10 @@ router.put('/branches/:id', async (req, res) => {
         if (branchData.mflCode !== undefined) {
             updates.push('mflCode = ?');
             values.push(branchData.mflCode || null);
+        }
+        if (branchData.frCode !== undefined) {
+            updates.push('frCode = ?');
+            values.push(branchData.frCode || null);
         }
         if (branchData.kephLevel !== undefined) {
             updates.push('kephLevel = ?');

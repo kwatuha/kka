@@ -56,6 +56,8 @@ import { patientApi, insuranceApi, queueApi } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
 import { AddToQueueDialog, type QueueServicePointChoice, queueTypeLabel } from "@/components/add-to-queue-dialog"
+import { PatientShrCareEntryBanner } from "@/components/patient-shr-care-entry-banner"
+import { PatientShaEligibilityCard } from "@/components/patient-sha-eligibility-card"
 import { StaticRouteRegex, useResolvedRouteParam, STATIC_EXPORT_PARAM_PLACEHOLDER } from "@/lib/utils/static-export-params"
 import { fetchPatientSummaryBundle } from "@/lib/patient-care-timeline"
 import {
@@ -83,6 +85,7 @@ export default function PatientProfilePage() {
   const [exporting, setExporting] = useState(false)
   const [breakGlassOpen, setBreakGlassOpen] = useState(false)
   const [breakGlassUntil, setBreakGlassUntil] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState("overview")
 
   useEffect(() => {
     let cancelled = false
@@ -403,6 +406,26 @@ export default function PatientProfilePage() {
       </div>
 
       <div className="space-y-4">
+        {patient?.nupi ? (
+          <PatientShrCareEntryBanner
+            patientId={patientId}
+            nupi={patient.nupi}
+            onOpenDocuments={() => setActiveTab("documents")}
+          />
+        ) : null}
+        {patient?.idNumber || patient?.nupi ? (
+          <PatientShaEligibilityCard
+            patientId={patientId}
+            nupi={patient.nupi}
+            dateOfBirth={patient.dateOfBirth}
+            idType={patient.idType}
+            idNumber={patient.idNumber}
+            nextOfKinName={patient.nextOfKinName}
+            nextOfKinPhone={patient.nextOfKinPhone}
+            onDemographicsUpdated={() => setReloadKey((k) => k + 1)}
+          />
+        ) : null}
+
         {!patientInfoOpen && (
           <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-3">
             <Avatar className="h-10 w-10">
@@ -577,7 +600,8 @@ export default function PatientProfilePage() {
             <CardContent>
               <RoleFilteredTabs
                 pagePath="/patients/[id]"
-                defaultValue="overview"
+                value={activeTab}
+                onValueChange={setActiveTab}
                 tabs={[
                   { value: "overview", label: "Overview" },
                   { value: "services", label: "Services" },

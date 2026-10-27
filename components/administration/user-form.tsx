@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { userApi, pharmacyApi } from "@/lib/api"
 import { toast } from "@/components/ui/use-toast"
-import { Loader2 } from "lucide-react"
+import { Loader2, Search } from "lucide-react"
+import { integrationApiUrl } from "@/lib/integration-api"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 
@@ -24,6 +25,8 @@ const formSchema = z.object({
   phone: z.string().optional(),
   roleId: z.string().min(1, "Role is required"),
   department: z.string().optional(),
+  hwrPuid: z.string().optional(),
+  hwrRegistrationNumber: z.string().optional(),
   // Optional in schema — we fill from the main facility before submit if empty
   branchId: z.string().optional(),
   canAccessAllBranches: z.boolean(),
@@ -63,7 +66,66 @@ export function UserForm({ open, onOpenChange, onSuccess, user, roles }: UserFor
   const [isMounted, setIsMounted] = useState(false)
   const [branches, setBranches] = useState<any[]>([])
   const [branchesLoading, setBranchesLoading] = useState(false)
+  const [hwrLookupLoading, setHwrLookupLoading] = useState(false)
+  const [hwrLookupIdType, setHwrLookupIdType] = useState("registration_number")
+  const [hwrLookupNumber, setHwrLookupNumber] = useState("")
   const isEditing = !!user
+
+  const authHeaders = (json = false): HeadersInit => {
+    const token =
+      localStorage.getItem("token") ||
+      localStorage.getItem("jwt_token") ||
+      localStorage.getItem("auth_token")
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    if (json) headers["Content-Type"] = "application/json"
+    return headers
+  }
+
+  const lookupHwrForUser = async () => {
+    const num = (hwrLookupNumber || form.getValues("hwrRegistrationNumber") || "").trim()
+    if (!num) {
+      toast({ title: "Enter KMPDC reg or National ID", variant: "destructive" })
+      return
+    }
+    try {
+      setHwrLookupLoading(true)
+      const res = await fetch(integrationApiUrl("/api/integrations/afyaconnect/hwr/search"), {
+        method: "POST",
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          identificationNumber: num,
+          identificationType: hwrLookupIdType,
+          regulator: "KMPDC",
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.found) {
+        toast({
+          title: "HWR lookup failed",
+          description: data.error || data.message || "No match",
+          variant: "destructive",
+        })
+        return
+      }
+      const summary = data.summary || {}
+      if (summary.hwrPuid) form.setValue("hwrPuid", summary.hwrPuid)
+      if (summary.kmpdcRegistration) {
+        form.setValue("hwrRegistrationNumber", summary.kmpdcRegistration)
+      }
+      toast({
+        title: "HWR match",
+        description: summary.fullName
+          ? `${summary.fullName} — fields updated`
+          : "PUID and registration updated",
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Request failed"
+      toast({ title: "HWR lookup error", description: msg, variant: "destructive" })
+    } finally {
+      setHwrLookupLoading(false)
+    }
+  }
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -77,6 +139,8 @@ export function UserForm({ open, onOpenChange, onSuccess, user, roles }: UserFor
       phone: "",
       roleId: "",
       department: "",
+      hwrPuid: "",
+      hwrRegistrationNumber: "",
       branchId: "",
       canAccessAllBranches: false,
       isActive: true,
@@ -127,6 +191,8 @@ export function UserForm({ open, onOpenChange, onSuccess, user, roles }: UserFor
         phone: user.phone ?? "",
         roleId: user.roleId?.toString() || "",
         department: user.department ?? "",
+        hwrPuid: user.hwrPuid ?? "",
+        hwrRegistrationNumber: user.hwrRegistrationNumber ?? "",
         branchId: user.branchId?.toString() || "",
         canAccessAllBranches: Boolean(user.canAccessAllBranches),
         isActive: user.isActive ?? true,
@@ -144,11 +210,13 @@ export function UserForm({ open, onOpenChange, onSuccess, user, roles }: UserFor
       phone: "",
       roleId: "",
       department: "",
+      hwrPuid: "",
+      hwrRegistrationNumber: "",
       branchId: main?.branchId?.toString() || "",
       canAccessAllBranches: false,
       isActive: true,
     })
-  }, [user, open, isMounted, form])
+  }, [user, open, isMounted, form, branches])
 
   // When facilities finish loading for a new user, default home facility if still empty
   useEffect(() => {
@@ -242,6 +310,8 @@ export function UserForm({ open, onOpenChange, onSuccess, user, roles }: UserFor
         phone: data.phone || null,
         roleId: parseInt(data.roleId, 10),
         department: data.department || null,
+        hwrPuid: data.hwrPuid?.trim() || null,
+        hwrRegistrationNumber: data.hwrRegistrationNumber?.trim() || null,
         branchId: parseInt(resolvedBranchId, 10),
         canAccessAllBranches: Boolean(data.canAccessAllBranches),
         isActive: data.isActive !== false,
@@ -512,6 +582,74 @@ export function UserForm({ open, onOpenChange, onSuccess, user, roles }: UserFor
                     </FormItem>
                   )}
                 />
+
+                <div className="rounded-md border p-3 space-y-3">
+                  <p className="text-sm font-medium">Health Worker Registry (SHR + eClaims)</p>
+                  <p className="text-xs text-muted-foreground leading-snug">
+                    Search by KMPDC registration (e.g. A7000) or National ID — not license PUID.
+                    PUID is for SHR; KMPDC reg is used for national claim doctor when env is unset.
+                  </p>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="space-y-1">
+                      <FormLabel className="text-xs">Lookup type</FormLabel>
+                      <Select value={hwrLookupIdType} onValueChange={setHwrLookupIdType}>
+                        <SelectTrigger className="w-[170px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="registration_number">KMPDC registration</SelectItem>
+                          <SelectItem value="National ID">National ID</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Input
+                      className="max-w-[160px]"
+                      placeholder="A7000 or ID number"
+                      value={hwrLookupNumber}
+                      onChange={(e) => setHwrLookupNumber(e.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={hwrLookupLoading}
+                      onClick={() => void lookupHwrForUser()}
+                    >
+                      {hwrLookupLoading ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Search className="mr-2 h-4 w-4" />
+                      )}
+                      Lookup HWR
+                    </Button>
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="hwrPuid"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>HWR membership PUID (SHR)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g., PUID-0676113-5" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="hwrRegistrationNumber"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>KMPDC registration (eClaims doctor)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g., A7000" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
                 <FormField
                   control={form.control}

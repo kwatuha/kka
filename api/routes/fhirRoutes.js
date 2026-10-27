@@ -254,6 +254,9 @@ router.post('/fhir/publish/patient/:id', async (req, res) => {
 router.post('/fhir/publish/encounter/:id', async (req, res) => {
   try {
     const result = await publishEncounter(pool, Number(req.params.id));
+    if (result.skipped) {
+      return res.status(409).json({ message: result.reason || 'Publish skipped', ...result });
+    }
     res.status(result.status === 'failed' ? 502 : 200).json(result);
   } catch (err) {
     res.status(404).json({ message: err.message });
@@ -263,6 +266,9 @@ router.post('/fhir/publish/encounter/:id', async (req, res) => {
 router.post('/fhir/publish/observation/:id', async (req, res) => {
   try {
     const result = await publishLabObservation(pool, Number(req.params.id));
+    if (result.skipped) {
+      return res.status(409).json({ message: result.reason || 'Publish skipped', ...result });
+    }
     res.status(result.status === 'failed' ? 502 : 200).json(result);
   } catch (err) {
     res.status(404).json({ message: err.message });

@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const { getRequestUserId } = require('../lib/branchContext');
 const { auditFromRequest } = require('../lib/auditLog');
 const { getMessagingComplianceStatus } = require('../lib/messagingCompliance');
+const { notifyIntegrationFailure, getIntegrationAlertStatus } = require('../lib/integrationFailureAlert');
 const { sendMail, smtpConfigured } = require('../lib/smtpMailer');
 
 function requireAdmin(req, res, next) {
@@ -133,6 +134,36 @@ router.get('/messaging-status', async (_req, res) => {
   } catch (err) {
     console.error('messaging-status:', err);
     res.status(500).json({ message: 'Failed to load messaging status', error: err.message });
+  }
+});
+
+/** POST /api/security/integration-alert-test — SMS/email test for integration failure alerting */
+router.post('/integration-alert-test', requireAdmin, async (req, res) => {
+  try {
+    const status = getIntegrationAlertStatus();
+    if (!status.enabled) {
+      return res.status(400).json({
+        message:
+          'Integration alerts not deliverable. Set INTEGRATION_ALERT_SMS or IDSR_ALERT_SMS (+ Advanta), or INTEGRATION_ALERT_EMAIL + SMTP.',
+        status,
+      });
+    }
+    const result = await notifyIntegrationFailure({
+      channel: 'test',
+      referenceId: `test-${Date.now()}`,
+      summary: 'Integration alert test (no action required)',
+      detail: 'Sent from Administration security / messaging settings.',
+    });
+    await auditFromRequest(req, {
+      action: 'INTEGRATION_ALERT_TEST',
+      resourceType: 'security_settings',
+      resourceId: 'integration_alert',
+      summary: `Integration alert test SMS=${result.smsSent || 0} email=${result.emailSent || 0}`,
+    });
+    res.json({ ok: true, status, result });
+  } catch (err) {
+    console.error('integration-alert-test:', err);
+    res.status(500).json({ message: 'Integration alert test failed', error: err.message });
   }
 });
 

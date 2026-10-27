@@ -23,7 +23,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { DialogFooter } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import * as LucideIcons from "lucide-react"
 import Link from "next/link"
 import { DASHBOARD_CARDS } from "@/lib/dashboard-cards-config"
 

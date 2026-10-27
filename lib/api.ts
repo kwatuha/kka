@@ -1,10 +1,11 @@
 // API utility functions for making requests to the backend
+import { getPublicApiBaseUrl } from './public-api-url';
 
-// Use relative URLs when in browser (same origin), or use NEXT_PUBLIC_API_URL if set
-// This allows the API to work both in development and production behind nginx
-const API_BASE_URL = typeof window !== 'undefined'
-  ? (process.env.NEXT_PUBLIC_API_URL || '')  // Empty string = relative URLs (same origin)
-  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001');  // Server-side needs absolute URL
+// Same-origin /api when proxied by nginx; split-port VPS uses getPublicApiBaseUrl() fallback.
+const API_BASE_URL =
+  typeof window !== 'undefined'
+    ? getPublicApiBaseUrl()
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 interface ApiOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -290,7 +291,16 @@ async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promis
     }
     const msg = err?.message || String(err);
     if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
-      throw new Error('Unable to reach the server. Retrying usually works if the connection is busy.');
+      const base = typeof window !== 'undefined' ? getPublicApiBaseUrl() : '';
+      const hint =
+        base && window.location?.protocol === 'https:' && base.startsWith('http:')
+          ? ' (mixed content: use HTTPS API or same-origin /api via your domain)'
+          : base
+            ? ` (API base: ${base})`
+            : ' (same-origin /api)';
+      throw new Error(
+        `Unable to reach the server${hint}. Retrying usually works if the connection is busy.`
+      );
     }
     throw err;
   } finally {

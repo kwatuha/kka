@@ -25,6 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/lib/auth/auth-context"
 import { cn } from "@/lib/utils"
+import { PatientShrConsentCard } from "@/components/patient-shr-consent-card"
 
 type Document = {
   documentId: number
@@ -408,6 +409,7 @@ export function PatientDocuments({ patientId }: { patientId: string }) {
 
   return (
     <>
+      <PatientShrConsentCard patientId={patientId} />
       <Card>
         <CardContent className="p-4">
           <div className="flex flex-wrap justify-between items-center gap-2 mb-4">

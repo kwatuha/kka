@@ -24,6 +24,8 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { PatientCombobox } from "@/components/patient-combobox"
 import { doctorsApi, medicalRecordsApi, clinicalCdsApi } from "@/lib/api"
+import { notifyFhirPublish, type FhirPublishPayload } from "@/lib/notify-fhir-publish"
+import { toast } from "@/components/ui/use-toast"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
 const medicalRecordFormSchema = z.object({
@@ -192,6 +194,7 @@ export function AddMedicalRecordForm({ open, onOpenChange, onSuccess, record }: 
         notes: data.notes || null,
       }
 
+      let saved: { fhirPublish?: unknown } | void
       if (record) {
         const clinicalChanged = CLINICAL_KEYS.some(
           (key) =>
@@ -204,13 +207,17 @@ export function AddMedicalRecordForm({ open, onOpenChange, onSuccess, record }: 
           setIsSubmitting(false)
           return
         }
-        await medicalRecordsApi.update(record.recordId.toString(), {
+        saved = await medicalRecordsApi.update(record.recordId.toString(), {
           ...submitData,
           ...(clinicalChanged ? { amendmentReason: reason } : {}),
         })
       } else {
-        await medicalRecordsApi.create(submitData)
+        saved = await medicalRecordsApi.create(submitData)
       }
+      notifyFhirPublish(
+        toast,
+        (saved as { fhirPublish?: FhirPublishPayload | null })?.fhirPublish
+      )
 
       form.reset()
       onOpenChange(false)

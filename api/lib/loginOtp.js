@@ -82,49 +82,50 @@ async function beginLoginOtpChallenge(user) {
 
   const phone = user.phone || user.mobile || user.phoneNumber;
   const normalized = normalizeKenyaMobile(phone);
-  if (phone && isValidKenyaMobile(normalized) && isAdvantaConfigured()) {
-    try {
-      await sendAdvantaSms({ mobile: normalized, message: smsText, useOtpRoute: true });
-      smsOk = true;
-    } catch (err) {
-      console.error('[loginOtp] SMS send failed:', err.message || err);
-      deliveryWarnings.push('sms_failed');
-    }
-  } else if (phone && !isValidKenyaMobile(normalized)) {
-    deliveryWarnings.push('invalid_phone');
-  } else if (!phone) {
-    deliveryWarnings.push('no_phone');
-  } else if (!isAdvantaConfigured()) {
-    deliveryWarnings.push('sms_not_configured');
-  }
-
   const email = String(user.email || '').trim();
-  if (email && smtpConfigured()) {
-    try {
-      const result = await sendMail({
-        to: email,
-        subject: `${brand} — sign-in verification code`,
-        text: [
-          `Your sign-in verification code is: ${code}`,
-          '',
-          'This code expires in 10 minutes.',
-          'If you did not try to sign in, contact your system administrator.',
-        ].join('\n'),
-      });
-      if (result.ok) {
-        emailOk = true;
-      } else {
+
+  const smsTask = async () => {
+    if (phone && isValidKenyaMobile(normalized) && isAdvantaConfigured()) {
+      try {
+        await sendAdvantaSms({ mobile: normalized, message: smsText, useOtpRoute: true });
+        smsOk = true;
+      } catch (err) {
+        console.error('[loginOtp] SMS send failed:', err.message || err);
+        deliveryWarnings.push('sms_failed');
+      }
+      return;
+    }
+    if (phone && !isValidKenyaMobile(normalized)) deliveryWarnings.push('invalid_phone');
+    else if (!phone) deliveryWarnings.push('no_phone');
+    else if (!isAdvantaConfigured()) deliveryWarnings.push('sms_not_configured');
+  };
+
+  const emailTask = async () => {
+    if (email && smtpConfigured()) {
+      try {
+        const result = await sendMail({
+          to: email,
+          subject: `${brand} — sign-in verification code`,
+          text: [
+            `Your sign-in verification code is: ${code}`,
+            '',
+            'This code expires in 10 minutes.',
+            'If you did not try to sign in, contact your system administrator.',
+          ].join('\n'),
+        });
+        if (result.ok) emailOk = true;
+        else deliveryWarnings.push('email_failed');
+      } catch (err) {
+        console.error('[loginOtp] email send failed:', err.message || err);
         deliveryWarnings.push('email_failed');
       }
-    } catch (err) {
-      console.error('[loginOtp] email send failed:', err.message || err);
-      deliveryWarnings.push('email_failed');
+      return;
     }
-  } else if (!email) {
-    deliveryWarnings.push('no_email');
-  } else if (!smtpConfigured()) {
-    deliveryWarnings.push('email_not_configured');
-  }
+    if (!email) deliveryWarnings.push('no_email');
+    else if (!smtpConfigured()) deliveryWarnings.push('email_not_configured');
+  };
+
+  await Promise.all([smsTask(), emailTask()]);
 
   const canDeliver = smsOk || emailOk;
 

@@ -3,6 +3,22 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react"
 import { queueApi, patientApi, triageApi } from "@/lib/api"
 import { checkAndNotifyCriticalVitals } from "@/lib/critical-vitals-utils"
+import { useAuth } from "@/lib/auth/auth-context"
+
+/** Roles that benefit from facility-wide critical vitals scan (skip on registration desk, etc.). */
+const CRITICAL_VITALS_SCAN_ROLES = new Set([
+  "admin",
+  "administrator",
+  "doctor",
+  "nurse",
+  "nursing",
+  "triage",
+  "emergency",
+  "clinical",
+  "midwife",
+  "maternity",
+  "icu",
+])
 
 export interface CriticalNotification {
   id: string
@@ -86,6 +102,10 @@ interface CriticalNotificationsContextType {
 const CriticalNotificationsContext = createContext<CriticalNotificationsContextType | undefined>(undefined)
 
 export function CriticalNotificationsProvider({ children }: { children: React.ReactNode }) {
+  const { user, isAuthenticated } = useAuth()
+  const role = user?.role?.toLowerCase() || ""
+  const mayRunVitalsScan = isAuthenticated && CRITICAL_VITALS_SCAN_ROLES.has(role)
+
   // Load notifications from localStorage on mount
   const [notifications, setNotifications] = useState<CriticalNotification[]>(() => {
     if (typeof window === 'undefined') return []
@@ -156,6 +176,8 @@ export function CriticalNotificationsProvider({ children }: { children: React.Re
   // Soft background scan — defer so it does not compete with page navigations
   // (Patients list, tabs, etc.). Prefer cached alerts from localStorage first.
   useEffect(() => {
+    if (!mayRunVitalsScan) return
+
     let cancelled = false
     let idleId: number | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -219,11 +241,11 @@ export function CriticalNotificationsProvider({ children }: { children: React.Re
       void scanForCriticalPatients()
     }
 
-    // Wait for idle (or 8s fallback) so first navigation requests win
+    // Wait for idle (or 25s fallback) so first navigation / patients list wins
     if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-      idleId = window.requestIdleCallback(startScan, { timeout: 8000 })
+      idleId = window.requestIdleCallback(startScan, { timeout: 25000 })
     } else {
-      timer = setTimeout(startScan, 8000)
+      timer = setTimeout(startScan, 25000)
     }
 
     return () => {
@@ -233,7 +255,7 @@ export function CriticalNotificationsProvider({ children }: { children: React.Re
       }
       if (timer) clearTimeout(timer)
     }
-  }, [addNotification])
+  }, [addNotification, mayRunVitalsScan])
   // Soft-check stored alerts against serving status (deferred; never blocks navigation)
   useEffect(() => {
     if (notifications.length === 0) return

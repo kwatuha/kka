@@ -985,8 +985,14 @@ router.post('/invoices/:id/payment', async (req, res) => {
         }
 
         if (notes && !batchReceiptNumber) {
+            const currentNotes = String(invoice.notes || '').trim();
+            const paymentNote = String(notes).trim();
+            const mergedNotes =
+                currentNotes && paymentNote
+                    ? `${currentNotes} | ${paymentNote}`
+                    : currentNotes || paymentNote;
             updateQuery += `, notes = ?`;
-            updateParams.push(notes);
+            updateParams.push(mergedNotes);
         }
 
         updateQuery += ` WHERE invoiceId = ?`;
@@ -1654,7 +1660,12 @@ router.get('/cashier/daily-summary', async (req, res) => {
                 COALESCE(i.branchId, p.registeredBranchId) AS branchId,
                 p.firstName AS patientFirstName,
                 p.lastName AS patientLastName,
-                p.patientNumber
+                p.patientNumber,
+                EXISTS (
+                  SELECT 1 FROM invoice_items ii
+                  WHERE ii.invoiceId = i.invoiceId
+                    AND (ii.description LIKE 'Lab Test:%' OR ii.description LIKE '%Laboratory%')
+                ) AS isLabInvoice
              FROM invoices i
              LEFT JOIN patients p ON p.patientId = i.patientId
              WHERE i.status IN ('paid', 'partial')

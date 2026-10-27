@@ -74,12 +74,30 @@ function formatAdvantaFailure(data, httpStatus) {
   return data?.message || data?.error || `Advanta SMS HTTP ${httpStatus}`;
 }
 
+function advantaFetchTimeoutMs() {
+  const n = Number(process.env.ADVANTA_FETCH_TIMEOUT_MS || 8000);
+  return Number.isFinite(n) && n > 0 ? n : 8000;
+}
+
 async function postAdvanta(url, body) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), advantaFetchTimeoutMs());
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error('Advanta SMS request timed out');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   const text = await res.text();
   let data;
   try {

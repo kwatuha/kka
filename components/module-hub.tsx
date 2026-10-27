@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { branding } from "@/lib/branding"
 import { getPersonalGreetingName } from "@/lib/user-greeting"
 import { HospitalLogoImage } from "@/components/hospital-logo-image"
-import * as LucideIcons from "lucide-react"
+import { getLucideIcon } from "@/lib/lucide-by-name"
 
 export function ModuleHub() {
   const router = useRouter()
@@ -64,9 +64,7 @@ export function ModuleHub() {
       {Array.isArray(quickLinks) && quickLinks.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center justify-center gap-1.5 sm:justify-start">
           {quickLinks.map((link, idx) => {
-            const Icon =
-              (LucideIcons as Record<string, LucideIcons.LucideIcon>)[link.icon || "ArrowRight"] ||
-              ArrowRight
+            const Icon = getLucideIcon(link.icon)
             return (
               <Link
                 key={`ql-${idx}-${link.url}`}

@@ -20,7 +20,7 @@ export function HieSmokeRecorderPanel() {
   const [passed, setPassed] = useState(true)
   const [notes, setNotes] = useState("")
   const [steps, setSteps] = useState(
-    "1. FHIR Patient publish (live)\n2. Clinical summary Composition publish\n3. Inbound bundle receive\n4. Verify fhir_export_log + outbox"
+    "1. Admin → Run preflight (OAuth, CR, FR, HWR, claim doctor, SHR, FHIR, eligibility, eClaims read, contacts)\n2. Users → Lookup HWR for clinicians (PUID + KMPDC reg)\n3. Registration / SHR consent / encounter or lab publish\n4. Chart witness: eligibility → sub-benefits → claims OTP → visit → billing line → attachments → discharge OTP → Submit national claim\n5. Record national claim ref from chart history + fhir_export_log / outbox"
   )
 
   const load = useCallback(async () => {

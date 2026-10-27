@@ -8,7 +8,7 @@ const { validatePasswordAgainstPolicy, getActivePasswordPolicy } = require('../l
 const USER_SELECT = `
     SELECT
         u.userId, u.username, u.email, u.firstName, u.lastName,
-        u.phone, u.department, u.isActive, u.roleId, u.createdAt, u.updatedAt,
+        u.phone, u.hwrPuid, u.hwrRegistrationNumber, u.department, u.isActive, u.roleId, u.createdAt, u.updatedAt,
         r.roleName AS role, r.roleName AS roleName,
         uba.branchId AS branchId,
         b.branchName AS branchName,
@@ -184,6 +184,8 @@ router.post('/', async (req, res) => {
         firstName,
         lastName,
         phone,
+        hwrPuid,
+        hwrRegistrationNumber,
         roleId,
         department,
         isActive,
@@ -225,8 +227,8 @@ router.post('/', async (req, res) => {
         // Insert user
         const [result] = await conn.execute(
             `INSERT INTO users
-               (username, email, passwordHash, firstName, lastName, phone, roleId, department, isActive)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               (username, email, passwordHash, firstName, lastName, phone, hwrPuid, hwrRegistrationNumber, roleId, department, isActive)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 username,
                 email,
@@ -234,6 +236,8 @@ router.post('/', async (req, res) => {
                 firstName,
                 lastName,
                 phone || null,
+                hwrPuid?.trim() || null,
+                hwrRegistrationNumber?.trim() || null,
                 roleId,
                 department || null,
                 isActive === false || isActive === 0 ? 0 : 1,
@@ -312,6 +316,11 @@ router.put('/:id', async (req, res) => {
         if (phone !== undefined) { updates.push('phone = ?'); values.push(phone); }
         if (roleId !== undefined) { updates.push('roleId = ?'); values.push(roleId); }
         if (department !== undefined) { updates.push('department = ?'); values.push(department); }
+        if (req.body.hwrPuid !== undefined) { updates.push('hwrPuid = ?'); values.push(req.body.hwrPuid || null); }
+        if (req.body.hwrRegistrationNumber !== undefined) {
+            updates.push('hwrRegistrationNumber = ?');
+            values.push(req.body.hwrRegistrationNumber?.trim() || null);
+        }
         if (isActive !== undefined) { updates.push('isActive = ?'); values.push(isActive ? 1 : 0); }
 
         if (password && String(password).trim().length > 0) {
