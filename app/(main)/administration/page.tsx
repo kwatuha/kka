@@ -131,13 +131,18 @@ export default function AdministrationPage() {
 
         <TabsContent value="system" className="space-y-4 mt-4">
           <IntegrationProcessBanner />
+          <div id="billing-tax-integrations" className="scroll-mt-24 space-y-4">
+            <p className="text-sm font-medium text-muted-foreground">
+              Billing &amp; tax integrations (M-Pesa, KRA eTIMS)
+            </p>
+            <MpesaSettingsPanel />
+            <EtimsSettingsPanel />
+          </div>
           <AfyaConnectCoveragePanel />
           <NationalIntegrationsPanel />
           <HieSmokeRecorderPanel />
           <AttestationProductGapPanel />
           <SystemConfiguration />
-          <MpesaSettingsPanel />
-          <EtimsSettingsPanel />
           <FhirExchangePanel />
           <ReportingClaimsPanel />
           {showComplianceAdminTooling() ? (

@@ -272,10 +272,13 @@ async function updateSettings(payload, updatedBy = null) {
 }
 
 function isAdminUser(req) {
-  const role =
-    req.user?.roleName || req.user?.role || req.user?.role?.roleName || '';
+  const u = req.user;
+  if (!u) return false;
+  const role = u.roleName || u.role || u.role?.roleName || '';
   const rn = String(role).toLowerCase();
-  return rn === 'admin' || rn.includes('admin') || rn === 'system administrator';
+  if (rn === 'admin' || rn.includes('admin') || rn === 'system administrator') return true;
+  if (Number(u.roleId) === 1) return true;
+  return false;
 }
 
 module.exports = {

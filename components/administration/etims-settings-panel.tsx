@@ -14,10 +14,25 @@ import { toast } from "@/components/ui/use-toast"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
+const EMPTY_ETIMS: EtimsAdminSettings = {
+  enabled: false,
+  integrationMode: "disabled",
+  environment: "sandbox",
+  kraPin: null,
+  branchOfficeId: null,
+  deviceSerialNumber: null,
+  traderName: null,
+  apiBaseUrl: null,
+  vscuLocalBaseUrl: "http://127.0.0.1:8088",
+  autoSubmitOnInvoicePaid: false,
+  notes: null,
+}
+
 export function EtimsSettingsPanel() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [settings, setSettings] = useState<EtimsAdminSettings | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [communicationKeyInput, setCommunicationKeyInput] = useState("")
 
   const load = async () => {
@@ -25,11 +40,17 @@ export function EtimsSettingsPanel() {
     try {
       const s = await billingApi.getEtimsSettings()
       setSettings(s)
+      setLoadError(null)
       setCommunicationKeyInput("")
     } catch (err: unknown) {
-      setSettings(null)
       const msg = err instanceof Error ? err.message : "Admin access may be required"
-      toast({ title: "Could not load eTIMS settings", description: msg, variant: "destructive" })
+      setLoadError(msg)
+      setSettings({ ...EMPTY_ETIMS })
+      toast({
+        title: "Could not load saved eTIMS settings",
+        description: `${msg} — you can still enter values and save if you are an administrator.`,
+        variant: "destructive",
+      })
     } finally {
       setLoading(false)
     }
@@ -77,7 +98,7 @@ export function EtimsSettingsPanel() {
 
   if (loading) {
     return (
-      <Card id="etims-settings">
+      <Card id="etims-settings" className="scroll-mt-24">
         <CardContent className="flex items-center gap-2 py-8 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading KRA eTIMS settings…
@@ -87,23 +108,13 @@ export function EtimsSettingsPanel() {
   }
 
   if (!settings) {
-    return (
-      <Card id="etims-settings">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Receipt className="h-5 w-5" />
-            KRA eTIMS
-          </CardTitle>
-          <CardDescription>Settings unavailable — sign in as an administrator.</CardDescription>
-        </CardHeader>
-      </Card>
-    )
+    return null
   }
 
   const readiness = settings.readiness
 
   return (
-    <Card id="etims-settings">
+    <Card id="etims-settings" className="scroll-mt-24 border-primary/30">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
           <Receipt className="h-5 w-5" />
@@ -139,6 +150,17 @@ export function EtimsSettingsPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        {loadError ? (
+          <Alert variant="destructive">
+            <AlertTitle>Could not load saved settings</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-2">
+              <span>{loadError}</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => void load()}>
+                Retry load
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {readiness ? (
           <Alert>
             <AlertTitle>Readiness</AlertTitle>

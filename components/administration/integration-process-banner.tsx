@@ -46,7 +46,7 @@ const STEPS = [
   {
     label: "7. KRA eTIMS",
     href: "/administration?tab=system#etims-settings",
-    detail: "Tax invoice OSCU/VSCU variables (sandbox PIN, branch, device, comm key)",
+    detail: "Opens the form directly below this banner — PIN, branch, device, comm key",
   },
 ] as const
 
